@@ -48,6 +48,12 @@ contextBridge.exposeInMainWorld('api', {
   listExtensions: (profileId) => ipcRenderer.invoke('extension:list', profileId),
   removeExtension: (profileId, dirName) => ipcRenderer.invoke('extension:remove', profileId, dirName),
   openExtensionsDir: (profileId) => ipcRenderer.invoke('extension:openDir', profileId),
+  reloadExtensions: (profileId) => ipcRenderer.invoke('extension:reload', profileId),
+
+  // 日志
+  openLogFile: () => ipcRenderer.invoke('log:openFile'),
+  openLogDir:  () => ipcRenderer.invoke('log:openDir'),
+  logPath:     () => ipcRenderer.invoke('log:path'),
 
   // 新建窗口（链接打开）
   openInNewWindow: (url) => ipcRenderer.invoke('window:openInNewWindow', url),

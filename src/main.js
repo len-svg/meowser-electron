@@ -1,4 +1,5 @@
 // Meowser — Chromium 版主进程
+const logger = require('./logger');  // 必须最早 require，以 hook 全局 console
 const { app, BrowserWindow, ipcMain, screen, session,
         Menu, Tray, nativeImage, globalShortcut, shell, dialog } = require('electron');
 const path = require('path');
@@ -62,6 +63,75 @@ function homeUrlFor(profile) {
 
 // ─── Session ───
 const extLoaded = new Set();
+// key=`${profileId}|${dirName}` → { state:'loading'|'loaded'|'failed', error?, id?, manifestVersion? }
+const extStatus = new Map();
+
+// 解析 chrome i18n 占位 __MSG_xxx__
+function resolveMsg(extDir, manifest, value) {
+  if (!value) return value;
+  const m = String(value).match(/^__MSG_(\w+)__$/);
+  if (!m) return value;
+  const key = m[1];
+  const tries = [manifest.default_locale, 'en', 'en_US', 'zh_CN', 'zh'].filter(Boolean);
+  for (const loc of tries) {
+    const fp = path.join(extDir, '_locales', loc, 'messages.json');
+    if (!fs.existsSync(fp)) continue;
+    try {
+      const msgs = JSON.parse(fs.readFileSync(fp, 'utf8'));
+      // chrome i18n 大小写不敏感
+      const k = Object.keys(msgs).find(x => x.toLowerCase() === key.toLowerCase());
+      if (k && msgs[k] && msgs[k].message) return msgs[k].message;
+    } catch {}
+  }
+  return value;
+}
+
+function readManifest(extDir) {
+  try {
+    const m = JSON.parse(fs.readFileSync(path.join(extDir, 'manifest.json'), 'utf8'));
+    return {
+      raw: m,
+      name: resolveMsg(extDir, m, m.name) || path.basename(extDir),
+      shortName: resolveMsg(extDir, m, m.short_name) || '',
+      description: resolveMsg(extDir, m, m.description) || '',
+      version: m.version || '?',
+      manifestVersion: m.manifest_version || 0,
+    };
+  } catch (e) {
+    return { raw: {}, name: path.basename(extDir), version: '?', manifestVersion: 0, parseError: e.message };
+  }
+}
+
+function loadExtensionsForSession(profileId, ses) {
+  const extDir = path.join(DATA_DIR, 'extensions', profileId);
+  if (!fs.existsSync(extDir)) return;
+  fs.readdirSync(extDir).forEach(name => {
+    const p = path.join(extDir, name);
+    let isDir = false;
+    try { isDir = fs.statSync(p).isDirectory(); } catch {}
+    if (!isDir) return;
+    const key = `${profileId}|${name}`;
+    const meta = readManifest(p);
+    extStatus.set(key, { state: 'loading', manifestVersion: meta.manifestVersion });
+    if (meta.parseError) {
+      extStatus.set(key, { state: 'failed', error: `manifest.json 解析失败: ${meta.parseError}`, manifestVersion: 0 });
+      console.error(`✗ 扩展 ${name}: manifest.json 解析失败 — ${meta.parseError}`);
+      return;
+    }
+    console.log(`→ 加载扩展 ${name} (MV${meta.manifestVersion}, "${meta.name}" v${meta.version})`);
+    ses.loadExtension(p, { allowFileAccess: true })
+      .then(ext => {
+        extStatus.set(key, { state: 'loaded', id: ext.id, manifestVersion: meta.manifestVersion });
+        console.log(`✓ 扩展加载成功: ${name} (id=${ext.id})`);
+      })
+      .catch(err => {
+        const msg = err && err.message ? err.message : String(err);
+        extStatus.set(key, { state: 'failed', error: msg, stack: err && err.stack, manifestVersion: meta.manifestVersion });
+        console.error(`✗ 扩展加载失败: ${name} (MV${meta.manifestVersion}) — ${msg}`);
+      });
+  });
+}
+
 function sessionForProfile(profile, { incognito = false } = {}) {
   const partition = incognito
     ? `meowser-incognito-${profile.id}-${Date.now()}`         // 无 persist: 前缀 → 内存
@@ -70,7 +140,6 @@ function sessionForProfile(profile, { incognito = false } = {}) {
 
   const px = profile.proxy || { type: 'direct' };
   if (px.type === 'http' || px.type === 'https') {
-    // 一个端口同时给 http/https 流量
     ses.setProxy({ proxyRules: `http=${px.host}:${px.port};https=${px.host}:${px.port}` });
   } else if (px.type === 'socks5') {
     ses.setProxy({ proxyRules: `socks5://${px.host}:${px.port}` });
@@ -80,19 +149,9 @@ function sessionForProfile(profile, { incognito = false } = {}) {
     ses.setProxy({ mode: 'direct' });
   }
 
-  if (!incognito) {
-    const extDir = path.join(DATA_DIR, 'extensions', profile.id);
-    if (fs.existsSync(extDir) && !extLoaded.has(profile.id)) {
-      extLoaded.add(profile.id);
-      fs.readdirSync(extDir).forEach(name => {
-        const p = path.join(extDir, name);
-        if (fs.statSync(p).isDirectory()) {
-          ses.loadExtension(p, { allowFileAccess: true })
-            .then(ext => console.log(`✓ 扩展加载: ${name} (${ext.id})`))
-            .catch(err => console.error(`✗ 扩展加载失败: ${name}`, err.message));
-        }
-      });
-    }
+  if (!incognito && !extLoaded.has(profile.id)) {
+    extLoaded.add(profile.id);
+    loadExtensionsForSession(profile.id, ses);
   }
   return ses;
 }
@@ -438,16 +497,36 @@ ipcMain.handle('extension:list', (e, profileId) => {
     .filter(n => { try { return fs.statSync(path.join(dir, n)).isDirectory(); } catch { return false; } })
     .map(name => {
       const p = path.join(dir, name);
-      let manifest = {};
-      try { manifest = JSON.parse(fs.readFileSync(path.join(p, 'manifest.json'), 'utf8')); } catch {}
+      const meta = readManifest(p);
+      const status = extStatus.get(`${profileId}|${name}`) || { state: 'pending' };
       return {
         dir: name,
-        name: manifest.name || name,
-        version: manifest.version || '?',
-        description: manifest.description || '',
-        manifestVersion: manifest.manifest_version || 0,
+        name: meta.name,
+        version: meta.version,
+        description: meta.description,
+        manifestVersion: meta.manifestVersion,
+        state: status.state,             // pending | loading | loaded | failed
+        error: status.error || '',
+        id: status.id || '',
       };
     });
+});
+ipcMain.handle('extension:reload', (e, profileId) => {
+  // 强制下次 sessionForProfile 时重新 load
+  extLoaded.delete(profileId);
+  // 立即对当前 session 触发一次（如果存在）
+  const ses = session.fromPartition(`persist:meowser-${profileId}`);
+  // 先把已加载的卸掉
+  ses.getAllExtensions().forEach(ext => {
+    try { ses.removeExtension(ext.id); } catch (err) { console.error('removeExtension', err.message); }
+  });
+  // 清掉旧状态
+  for (const k of Array.from(extStatus.keys())) {
+    if (k.startsWith(profileId + '|')) extStatus.delete(k);
+  }
+  loadExtensionsForSession(profileId, ses);
+  extLoaded.add(profileId);
+  return true;
 });
 ipcMain.handle('extension:remove', (e, profileId, dirName) => {
   const p = path.join(DATA_DIR, 'extensions', profileId, dirName);
@@ -461,6 +540,11 @@ ipcMain.handle('extension:openDir', (e, profileId) => {
   fs.mkdirSync(dir, { recursive: true });
   shell.openPath(dir);
 });
+
+// ─── 日志 ───
+ipcMain.handle('log:openFile', () => shell.openPath(logger.currentLogFile()));
+ipcMain.handle('log:openDir',  () => shell.openPath(logger.LOG_DIR));
+ipcMain.handle('log:path',     () => logger.currentLogFile());
 ipcMain.handle('window:openInNewWindow', (e, url) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   if (!win || !win.profile) return;

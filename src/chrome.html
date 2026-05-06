@@ -411,22 +411,35 @@ async function openExtPanel() {
     if (list.length === 0) {
       const e = document.createElement('div');
       e.className = 'ext-item empty';
-      e.textContent = '还没装扩展。';
+      e.textContent = '还没装扩展。访问 Chrome 商店点扩展页 → 右下"安装"按钮。';
       panel.appendChild(e);
     } else {
       list.forEach(ext => {
         const row = document.createElement('div');
         row.className = 'ext-item';
-        const incompat = ext.manifestVersion === 3 ? ' · ⚠️ MV3 可能不工作' : '';
+        let badge = '';
+        let detail = '';
+        if (ext.state === 'loaded') {
+          badge = '<span style="color:#137333;font-size:11px">● 已加载</span>';
+        } else if (ext.state === 'failed') {
+          badge = '<span style="color:#d93025;font-size:11px">● 加载失败</span>';
+          detail = `<div style="color:#d93025;font-size:11px;margin-top:2px;word-break:break-word">${escapeHtml(ext.error || '未知错误')}</div>`;
+        } else if (ext.state === 'loading') {
+          badge = '<span style="color:#80868b;font-size:11px">● 加载中</span>';
+        } else {
+          badge = '<span style="color:#80868b;font-size:11px">● 未加载（重开窗口生效）</span>';
+        }
+        const mvWarn = ext.manifestVersion === 3 ? ' <span style="color:#b06000">· ⚠️ MV3</span>' : '';
         row.innerHTML = `
           <div class="name">
             <b>${escapeHtml(ext.name)}</b>
-            <small>v${escapeHtml(ext.version)}${incompat}</small>
+            <small>v${escapeHtml(ext.version)}${mvWarn} · ${badge}</small>
+            ${detail}
           </div>
           <span class="x" title="移除">✕</span>`;
         row.querySelector('.x').onclick = async (ev) => {
           ev.stopPropagation();
-          if (!confirm(`移除扩展「${ext.name}」？\n\n下次打开窗口才彻底卸载。`)) return;
+          if (!confirm(`移除扩展「${ext.name}」？`)) return;
           await window.api.removeExtension(profile.id, ext.dir);
           openExtPanel();
         };
@@ -438,9 +451,12 @@ async function openExtPanel() {
   const sep = document.createElement('div'); sep.className = 'sep'; panel.appendChild(sep);
 
   const opts = [
-    { icon: 'M12 5v14M5 12h14',                                                  label: '从 Chrome 商店 URL 安装…', click: installFromStore, disabled: isIncognito },
+    { icon: 'M9 12l2 2 4-4M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',                label: '访问 Chrome 商店',          click: () => navigate('https://chromewebstore.google.com/'), disabled: isIncognito },
     { icon: 'M3 7h18M6 7v13a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7M9 7V4h6v3',         label: '从本地目录安装…',           click: installLocal,     disabled: isIncognito },
+    { icon: 'M21 12a9 9 0 1 1-3-6.7L21 8M21 3v5h-5',                              label: '重新加载扩展',              click: async () => { await window.api.reloadExtensions(profile.id); setTimeout(openExtPanel, 200); }, disabled: isIncognito },
     { icon: 'M3 6h18M6 6v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V6',                    label: '打开扩展目录',               click: () => window.api.openExtensionsDir(profile.id), disabled: isIncognito },
+    { icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 13h6M9 17h6',
+      label: '打开调试日志', click: () => window.api.openLogFile() },
   ];
   opts.forEach(o => {
     const r = document.createElement('div');
@@ -452,12 +468,11 @@ async function openExtPanel() {
 
   showPanelAt('ext-panel', document.getElementById('btn-ext').getBoundingClientRect());
 }
-async function installFromStore() {
-  const v = await window.api.askText({ title: '安装扩展', label: 'Chrome 商店 URL 或扩展 ID', placeholder: 'https://chromewebstore.google.com/detail/...' });
-  if (!v) return;
-  const r = await window.api.installExtensionFromStore(v, profile.id);
+async function installFromStoreById(id) {
+  toast(`下载扩展中…`);
+  const r = await window.api.installExtensionFromStore(id, profile.id);
   if (r && r.ok) {
-    toast(`✓ 已下载「${r.name}」— 重开窗口生效`);
+    toast(`✓ 已下载「${r.name}」— 点扩展菜单 → 重新加载`);
   } else {
     toast(`✗ 安装失败: ${r && r.msg || '未知错误'}`, 'error');
   }
@@ -569,26 +584,73 @@ function syncUrl() {
   if (document.activeElement !== urlInput) urlInput.value = wv.getURL ? wv.getURL() : '';
   updateStar();
 }
-wv.addEventListener('did-navigate',         syncUrl);
-wv.addEventListener('did-navigate-in-page', syncUrl);
-wv.addEventListener('did-finish-load',      syncUrl);
+wv.addEventListener('did-navigate',         () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-navigate-in-page', () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-finish-load',      () => { syncUrl(); maybeInjectStoreButton(); });
 
-// ─── 链接 → 新窗口（不要 tabs）───
+// ─── 链接 → 新窗口（不要 tabs）；meowser-install:// → 装扩展 ───
 wv.addEventListener('new-window', e => {
   e.preventDefault();
-  if (e.url) window.api.openInNewWindow(e.url);
+  if (!e.url) return;
+  const m = /^meowser-install:\/\/([a-p]{32})/.exec(e.url);
+  if (m) { installFromStoreById(m[1]); return; }
+  window.api.openInNewWindow(e.url);
 });
 wv.addEventListener('dom-ready', () => {
   try {
     const wc = wv.getWebContents && wv.getWebContents();
     if (wc && wc.setWindowOpenHandler) {
       wc.setWindowOpenHandler(({ url }) => {
+        const m = /^meowser-install:\/\/([a-p]{32})/.exec(url || '');
+        if (m) { installFromStoreById(m[1]); return { action: 'deny' }; }
         if (url) window.api.openInNewWindow(url);
         return { action: 'deny' };
       });
     }
   } catch {}
+  maybeInjectStoreButton();
 });
+
+// 进入 chromewebstore.google.com 详情页时注入"在 Meowser 安装"按钮
+function maybeInjectStoreButton() {
+  const u = wv.getURL ? wv.getURL() : '';
+  if (!/^https:\/\/chromewebstore\.google\.com\//.test(u)) return;
+  const idMatch = u.match(/\/detail\/[^\/]+\/([a-p]{32})/) || u.match(/([a-p]{32})/);
+  const id = idMatch ? idMatch[1] : '';
+  const script = `
+    (function(){
+      try {
+        var el = document.getElementById('__meowser_install_btn');
+        if (el) el.remove();
+        var b = document.createElement('div');
+        b.id = '__meowser_install_btn';
+        b.textContent = ${JSON.stringify(id ? '➕ 在 Meowser 中安装' : '➕ 打开扩展详情页以安装')};
+        var s = b.style;
+        s.cssText = [
+          'position:fixed','right:24px','bottom:24px','z-index:2147483647',
+          'background:#1a73e8','color:#fff','padding:12px 22px',
+          'border-radius:24px','font:600 14px/1 -apple-system,BlinkMacSystemFont,sans-serif',
+          'box-shadow:0 6px 20px rgba(26,115,232,0.45),0 2px 6px rgba(0,0,0,0.18)',
+          'cursor:'+${JSON.stringify(id ? 'pointer' : 'default')},
+          'user-select:none','letter-spacing:0.2px'
+        ].join(';');
+        if (${JSON.stringify(!!id)}) {
+          b.onmouseenter = function(){ b.style.background='#1765cc'; };
+          b.onmouseleave = function(){ b.style.background='#1a73e8'; };
+          b.onclick = function(){
+            b.textContent = '⏳ 下载中…';
+            b.style.background = '#5f6368';
+            window.open('meowser-install://' + ${JSON.stringify(id)}, '_blank');
+          };
+        } else {
+          b.style.opacity = '0.7';
+        }
+        document.body.appendChild(b);
+      } catch (e) {}
+    })();
+  `;
+  try { wv.executeJavaScript(script, true); } catch {}
+}
 
 // 默认页
 wv.src = initialUrl;
