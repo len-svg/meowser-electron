@@ -43,8 +43,14 @@ contextBridge.exposeInMainWorld('api', {
   arrange: (edge, style) => ipcRenderer.invoke('layout:arrange', edge, style),
 
   // 扩展
-  installLocalExtension: () => ipcRenderer.invoke('extension:installLocal'),
-  installExtensionFromStore: (urlOrId) => ipcRenderer.invoke('extension:installFromStore', urlOrId),
+  installLocalExtension: (profileId) => ipcRenderer.invoke('extension:installLocal', profileId),
+  installExtensionFromStore: (urlOrId, profileId) => ipcRenderer.invoke('extension:installFromStore', urlOrId, profileId),
+  listExtensions: (profileId) => ipcRenderer.invoke('extension:list', profileId),
+  removeExtension: (profileId, dirName) => ipcRenderer.invoke('extension:remove', profileId, dirName),
+  openExtensionsDir: (profileId) => ipcRenderer.invoke('extension:openDir', profileId),
+
+  // 新建窗口（链接打开）
+  openInNewWindow: (url) => ipcRenderer.invoke('window:openInNewWindow', url),
 
   // 文本输入框
   askText: (opts) => ipcRenderer.invoke('ui:askText', opts || {}),

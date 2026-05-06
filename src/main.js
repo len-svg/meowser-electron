@@ -363,16 +363,21 @@ function broadcastBmChange(profileId) {
 }
 
 // ─── 扩展安装 ───
-ipcMain.handle('extension:installLocal', async (e) => {
+async function pickProfileId() {
   const profiles = loadProfiles();
   if (profiles.length === 0) return null;
+  if (profiles.length === 1) return profiles[0].id;
   const pick = await dialog.showMessageBox({
     type: 'question', title: '装到哪个工作区？',
     buttons: [...profiles.map(p => `${p.emoji} ${p.name}`), '取消'],
     cancelId: profiles.length, defaultId: 0,
   });
   if (pick.response >= profiles.length) return null;
-  const profileId = profiles[pick.response].id;
+  return profiles[pick.response].id;
+}
+ipcMain.handle('extension:installLocal', async (e, profileIdOpt) => {
+  const profileId = profileIdOpt || await pickProfileId();
+  if (!profileId) return null;
   const r = await dialog.showOpenDialog({ title: '选 unpacked extension 目录', properties: ['openDirectory'] });
   if (r.canceled || r.filePaths.length === 0) return null;
   const src = r.filePaths[0];
@@ -426,16 +431,45 @@ ipcMain.handle('ui:askText', async (e, { title, label, placeholder }) => {
   });
 });
 
-ipcMain.handle('extension:installFromStore', async (e, urlOrId) => {
-  const profiles = loadProfiles();
-  if (profiles.length === 0) return { ok: false, msg: '没有 profile' };
-  const pick = await dialog.showMessageBox({
-    type: 'question', title: '装到哪个工作区？',
-    buttons: [...profiles.map(p => `${p.emoji} ${p.name}`), '取消'],
-    cancelId: profiles.length, defaultId: 0,
-  });
-  if (pick.response >= profiles.length) return { ok: false, msg: '取消' };
-  const profileId = profiles[pick.response].id;
+ipcMain.handle('extension:list', (e, profileId) => {
+  const dir = path.join(DATA_DIR, 'extensions', profileId);
+  if (!fs.existsSync(dir)) return [];
+  return fs.readdirSync(dir)
+    .filter(n => { try { return fs.statSync(path.join(dir, n)).isDirectory(); } catch { return false; } })
+    .map(name => {
+      const p = path.join(dir, name);
+      let manifest = {};
+      try { manifest = JSON.parse(fs.readFileSync(path.join(p, 'manifest.json'), 'utf8')); } catch {}
+      return {
+        dir: name,
+        name: manifest.name || name,
+        version: manifest.version || '?',
+        description: manifest.description || '',
+        manifestVersion: manifest.manifest_version || 0,
+      };
+    });
+});
+ipcMain.handle('extension:remove', (e, profileId, dirName) => {
+  const p = path.join(DATA_DIR, 'extensions', profileId, dirName);
+  if (!fs.existsSync(p)) return false;
+  fs.rmSync(p, { recursive: true, force: true });
+  extLoaded.delete(profileId);
+  return true;
+});
+ipcMain.handle('extension:openDir', (e, profileId) => {
+  const dir = path.join(DATA_DIR, 'extensions', profileId);
+  fs.mkdirSync(dir, { recursive: true });
+  shell.openPath(dir);
+});
+ipcMain.handle('window:openInNewWindow', (e, url) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || !win.profile) return;
+  createBrowserWindow(win.profile, { url, incognito: !!win.__incognito });
+});
+
+ipcMain.handle('extension:installFromStore', async (e, urlOrId, profileIdOpt) => {
+  const profileId = profileIdOpt || await pickProfileId();
+  if (!profileId) return { ok: false, msg: '取消' };
   const targetDir = path.join(DATA_DIR, 'extensions', profileId);
   fs.mkdirSync(targetDir, { recursive: true });
   try {
