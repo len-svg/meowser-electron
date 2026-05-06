@@ -1,6 +1,6 @@
 {
   "name": "meowser",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Meowser — 浮动浏览器（Chromium 重写版）",
   "main": "src/main.js",
   "scripts": {
@@ -9,6 +9,7 @@
     "build:mac": "electron-builder --mac",
     "build:mac:arm": "electron-builder --mac --arm64",
     "build:mac:x64": "electron-builder --mac --x64",
+    "release:mac": "electron-builder --mac --arm64 && echo \"\\n→ artifacts: dist/Meowser-$(node -p \\\"require('./package.json').version\\\")-arm64.{dmg,zip}\"",
     "pack": "electron-builder --dir"
   },
   "author": "Meowser",
@@ -45,8 +46,15 @@
           "arch": [
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64"
+          ]
         }
       ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "icon": "build/icon.png",
       "hardenedRuntime": false,
       "gatekeeperAssess": false,
