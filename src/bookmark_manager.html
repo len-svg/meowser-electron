@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>书签管理</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    background: #fff; color: #1d1d1f;
+    -webkit-user-select: none;
+    display: flex; flex-direction: column;
+  }
+
+  .titlebar {
+    height: 38px; background: #f5f5f7;
+    border-bottom: 0.5px solid rgba(0,0,0,0.08);
+    display: flex; align-items: center; padding: 0 16px;
+    -webkit-app-region: drag; flex-shrink: 0;
+  }
+  .titlebar h1 {
+    font-size: 13px; font-weight: 600; color: #1d1d1f;
+    margin-left: auto; margin-right: auto;
+  }
+
+  .toolbar {
+    height: 54px; border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; padding: 0 16px; gap: 8px;
+    flex-shrink: 0; -webkit-app-region: no-drag;
+  }
+  .profile-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px;
+    background: rgba(52,199,89,0.10); border: 0.5px solid #34C759;
+    border-radius: 6px; font-size: 12px; color: #1d1d1f;
+    flex-shrink: 0;
+  }
+  .profile-pill .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .search {
+    flex: 1; height: 30px; padding: 0 12px;
+    border: 1px solid rgba(0,0,0,0.10); border-radius: 6px;
+    font-size: 13px; background: #fafafa; outline: none;
+  }
+  .search:focus { border-color: #007aff; background: #fff; box-shadow: 0 0 0 3px rgba(0,113,227,0.10); }
+  .tbtn {
+    height: 30px; padding: 0 12px;
+    background: #fff; border: 1px solid rgba(0,0,0,0.10);
+    border-radius: 6px; font-size: 12px; cursor: pointer;
+    display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  }
+  .tbtn:hover { background: #f0f0f3; }
+  .tbtn.primary { background: #0066cc; color: #fff; border-color: #0066cc; }
+  .tbtn.primary:hover { background: #0055aa; }
+
+  .bulk-bar {
+    background: #0066cc; color: #fff;
+    padding: 8px 16px; display: none;
+    align-items: center; gap: 12px; font-size: 12px;
+    flex-shrink: 0;
+  }
+  .bulk-bar.show { display: flex; }
+  .bulk-bar button {
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.18); border: none;
+    color: #fff; border-radius: 4px; cursor: pointer; font-size: 11px;
+  }
+  .bulk-bar button:hover { background: rgba(255,255,255,0.28); }
+  .bulk-bar .x { margin-left: auto; cursor: pointer; }
+
+  .body {
+    flex: 1; display: flex; overflow: hidden;
+  }
+
+  .sidebar {
+    width: 200px; background: #fafafa;
+    border-right: 0.5px solid rgba(0,0,0,0.06);
+    padding: 12px 8px; overflow-y: auto; flex-shrink: 0;
+  }
+  .side-h {
+    font-size: 10px; color: #86868b;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    font-family: ui-monospace, monospace;
+    padding: 8px 8px 4px;
+  }
+  .side-item {
+    padding: 7px 10px; font-size: 12px; border-radius: 5px;
+    cursor: pointer; display: flex; align-items: center; gap: 8px;
+    color: #1d1d1f;
+  }
+  .side-item:hover { background: rgba(0,0,0,0.05); }
+  .side-item.active { background: #0066cc; color: #fff; }
+  .side-item .badge {
+    margin-left: auto; font-size: 10px; color: #86868b;
+    font-family: ui-monospace, monospace;
+  }
+  .side-item.active .badge { color: rgba(255,255,255,0.7); }
+
+  .main {
+    flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .col-head {
+    display: grid; grid-template-columns: 32px 36px 1fr 200px 100px 32px;
+    gap: 10px; padding: 8px 16px;
+    font-size: 10px; color: #86868b;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    font-family: ui-monospace, monospace;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    flex-shrink: 0;
+  }
+  .col-head label { display: flex; align-items: center; cursor: pointer; }
+  .col-head input { cursor: pointer; }
+
+  .list {
+    flex: 1; overflow-y: auto;
+  }
+  .row {
+    display: grid; grid-template-columns: 32px 36px 1fr 200px 100px 32px;
+    gap: 10px; align-items: center; padding: 10px 16px;
+    border-bottom: 0.5px solid rgba(0,0,0,0.04); font-size: 13px;
+  }
+  .row:hover { background: rgba(0,0,0,0.03); }
+  .row.selected { background: rgba(0,102,204,0.06); }
+  .row input[type=checkbox] { cursor: pointer; width: 14px; height: 14px; }
+  .row img { width: 18px; height: 18px; }
+  .row .nm {
+    font-weight: 500; color: #1d1d1f;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    cursor: pointer;
+  }
+  .row .nm:hover { color: #0066cc; text-decoration: underline; }
+  .row .nm .note {
+    display: block; font-size: 11px; color: #86868b;
+    font-weight: 400; font-family: ui-monospace, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .row .age {
+    font-size: 11px; color: #86868b;
+    font-family: ui-monospace, monospace;
+  }
+  .row .del {
+    visibility: hidden;
+    background: transparent; border: none;
+    color: #ff3b30; cursor: pointer; font-size: 14px;
+    padding: 2px;
+  }
+  .row:hover .del { visibility: visible; }
+
+  .empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: #86868b; font-size: 13px;
+  }
+
+  .bottom-bar {
+    height: 32px; background: #fafafa;
+    border-top: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; padding: 0 16px; gap: 8px;
+    font-size: 11px; color: #86868b;
+    font-family: ui-monospace, monospace;
+    flex-shrink: 0;
+  }
+  .bottom-bar .right { margin-left: auto; }
+
+  /* Add 弹窗 */
+  .add-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.4);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100;
+  }
+  .add-overlay.show { display: flex; }
+  .add-dialog {
+    background: #fff; border-radius: 10px; padding: 20px;
+    width: 420px; box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  }
+  .add-dialog h3 { font-size: 14px; margin-bottom: 14px; }
+  .add-dialog label {
+    display: block; font-size: 11px; color: #86868b;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    font-family: ui-monospace, monospace; margin: 8px 0 4px;
+  }
+  .add-dialog input {
+    width: 100%; height: 32px; padding: 0 10px;
+    border: 1px solid rgba(0,0,0,0.10); border-radius: 5px;
+    font-size: 13px; outline: none;
+  }
+  .add-dialog input:focus { border-color: #0066cc; }
+  .add-dialog .row-btn {
+    display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+  <div class="titlebar">
+    <h1 id="title">书签管理</h1>
+  </div>
+
+  <div class="toolbar">
+    <span class="profile-pill" id="profile-pill">
+      <span class="dot" id="dot"></span>
+      <span id="profile-label">—</span>
+    </span>
+    <input class="search" id="search" placeholder="🔍 搜索 · 名称 / URL">
+    <button class="tbtn" id="btn-import-chrome" title="从系统 Chrome 内置书签直接导入">📥 Chrome 导入</button>
+    <button class="tbtn" id="btn-import-html" title="导入 .html 书签文件（Netscape 格式）">📂 HTML 导入</button>
+    <button class="tbtn" id="btn-export-html" title="导出当前工作区书签为 .html">💾 导出</button>
+    <button class="tbtn primary" id="btn-add">＋ 添加</button>
+  </div>
+
+  <div class="bulk-bar" id="bulk-bar">
+    <span>已选 <b id="sel-count">0</b> 项</span>
+    <button id="bulk-del">批量删除</button>
+    <button id="bulk-export">导出选中</button>
+    <span class="x" id="bulk-cancel">取消 ✕</span>
+  </div>
+
+  <div class="body">
+    <aside class="sidebar">
+      <div class="side-h">工作区</div>
+      <div id="profile-list"></div>
+      <div class="side-h" style="margin-top:8px">视图</div>
+      <div class="side-item" data-view="all"><span>📋</span> 全部 <span class="badge" id="cnt-all">0</span></div>
+      <div class="side-item" data-view="recent"><span>⏱</span> 最近 7 天 <span class="badge" id="cnt-recent">0</span></div>
+      <div class="side-item" data-view="dup"><span>🔁</span> 重复 URL <span class="badge" id="cnt-dup">0</span></div>
+    </aside>
+
+    <div class="main">
+      <div class="col-head">
+        <label><input type="checkbox" id="check-all"></label>
+        <div></div>
+        <div>NAME / URL</div>
+        <div>添加于</div>
+        <div>操作</div>
+        <div></div>
+      </div>
+      <div class="list" id="list"></div>
+      <div class="bottom-bar">
+        <span id="path-info">—</span>
+        <span class="right" id="right-info">—</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add 弹窗 -->
+  <div class="add-overlay" id="add-overlay">
+    <div class="add-dialog">
+      <h3>添加书签</h3>
+      <label>NAME</label>
+      <input id="add-name" placeholder="书签名称">
+      <label>URL</label>
+      <input id="add-url" placeholder="https://...">
+      <div class="row-btn">
+        <button class="tbtn" id="add-cancel">取消</button>
+        <button class="tbtn primary" id="add-ok">保存</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const themeColors = { red: '#FF3B30', green: '#34C759', yellow: '#FFCC00' };
+let profiles = [];
+let currentProfileId = null;
+let currentView = 'all';
+let allBookmarks = [];      // 当前 profile 的全部
+let viewBookmarks = [];     // 经过 view + 搜索过滤后的
+let selected = new Set();
+let searchQ = '';
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function fmtAge(ts) {
+  if (!ts) return '—';
+  const d = (Date.now() - ts) / 1000;
+  if (d < 60) return '刚刚';
+  if (d < 3600) return Math.floor(d/60) + ' 分钟前';
+  if (d < 86400) return Math.floor(d/3600) + ' 小时前';
+  if (d < 86400*7) return Math.floor(d/86400) + ' 天前';
+  if (d < 86400*30) return Math.floor(d/86400/7) + ' 周前';
+  if (d < 86400*365) return Math.floor(d/86400/30) + ' 月前';
+  return Math.floor(d/86400/365) + ' 年前';
+}
+
+function safeHost(u){try{return new URL(u).hostname}catch{return''}}
+
+async function refreshProfiles() {
+  profiles = await window.api.listProfiles();
+  const list = document.getElementById('profile-list');
+  list.innerHTML = '';
+  for (const p of profiles) {
+    const cnt = (await window.api.listBookmarks(p.id)).length;
+    const el = document.createElement('div');
+    el.className = 'side-item' + (p.id === currentProfileId ? ' active' : '');
+    el.innerHTML = `<span>${p.emoji || '🐱'}</span><span>${escapeHtml(p.name)}</span><span class="badge">${cnt}</span>`;
+    el.onclick = () => switchProfile(p.id);
+    list.appendChild(el);
+  }
+}
+
+async function switchProfile(id) {
+  currentProfileId = id;
+  selected.clear();
+  const p = profiles.find(x => x.id === id);
+  document.getElementById('profile-label').textContent = `${p.emoji} ${p.name}`;
+  const c = themeColors[p.theme] || '#FFCC00';
+  document.getElementById('dot').style.background = c;
+  document.getElementById('profile-pill').style.borderColor = c;
+  document.getElementById('profile-pill').style.background = c + '1a';
+  document.getElementById('path-info').textContent = `📂 ~/.meowser/bookmarks/${p.id}.json`;
+  await refreshProfiles();
+  await refreshList();
+}
+
+async function refreshList() {
+  if (!currentProfileId) return;
+  allBookmarks = await window.api.listBookmarks(currentProfileId);
+
+  // 视图过滤
+  let list = allBookmarks;
+  if (currentView === 'recent') {
+    const cutoff = Date.now() - 86400*7*1000;
+    list = list.filter(b => (b.ts || 0) >= cutoff);
+  } else if (currentView === 'dup') {
+    const seen = new Map();
+    allBookmarks.forEach(b => {
+      const h = safeHost(b.url);
+      if (!h) return;
+      seen.set(h, (seen.get(h) || 0) + 1);
+    });
+    list = list.filter(b => seen.get(safeHost(b.url)) > 1);
+  }
+
+  // 搜索过滤
+  if (searchQ) {
+    const q = searchQ.toLowerCase();
+    list = list.filter(b =>
+      (b.title || '').toLowerCase().includes(q) ||
+      (b.url || '').toLowerCase().includes(q));
+  }
+  viewBookmarks = list;
+
+  // 视图 counts
+  document.getElementById('cnt-all').textContent = allBookmarks.length;
+  document.getElementById('cnt-recent').textContent = allBookmarks.filter(b => (b.ts||0) >= Date.now()-86400*7*1000).length;
+  const seen = new Map();
+  allBookmarks.forEach(b => { const h = safeHost(b.url); if (h) seen.set(h, (seen.get(h)||0)+1); });
+  document.getElementById('cnt-dup').textContent = allBookmarks.filter(b => seen.get(safeHost(b.url))>1).length;
+
+  document.getElementById('right-info').textContent =
+    `${list.length} / ${allBookmarks.length} 条`;
+
+  renderListRows();
+  updateBulkBar();
+}
+
+function renderListRows() {
+  const root = document.getElementById('list');
+  if (viewBookmarks.length === 0) {
+    root.innerHTML = '<div class="empty">' +
+      (allBookmarks.length === 0
+        ? '当前工作区还没书签 — 点 ⭐ 加，或「📥 Chrome 导入」/「📂 HTML 导入」'
+        : '没有匹配的书签') +
+      '</div>';
+    return;
+  }
+  root.innerHTML = '';
+  viewBookmarks.forEach(b => {
+    const row = document.createElement('div');
+    row.className = 'row' + (selected.has(b.url) ? ' selected' : '');
+    const host = safeHost(b.url);
+    row.innerHTML = `
+      <input type="checkbox" ${selected.has(b.url) ? 'checked' : ''}>
+      <img src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(host)}" onerror="this.style.display='none'">
+      <div class="nm" title="${escapeHtml(b.url)}">
+        ${escapeHtml(b.title || b.url)}
+        <span class="note">${escapeHtml(b.url)}</span>
+      </div>
+      <div class="age" title="${b.ts ? new Date(b.ts).toLocaleString() : ''}">${fmtAge(b.ts)}</div>
+      <div class="age">手动 / 导入</div>
+      <button class="del" title="删除">🗑</button>
+    `;
+    row.querySelector('input[type=checkbox]').onclick = (e) => {
+      e.stopPropagation();
+      if (e.target.checked) selected.add(b.url); else selected.delete(b.url);
+      row.classList.toggle('selected', e.target.checked);
+      updateBulkBar();
+    };
+    row.querySelector('.nm').onclick = () => {
+      window.api.openExternal(b.url, 'safari');
+    };
+    row.querySelector('.del').onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(`删除「${b.title || b.url}」？`)) return;
+      await window.api.removeBookmark(currentProfileId, b.url);
+      await refreshList();
+    };
+    document.getElementById('list').appendChild(row);
+  });
+
+  // check-all 状态
+  document.getElementById('check-all').checked =
+    viewBookmarks.length > 0 && viewBookmarks.every(b => selected.has(b.url));
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  bar.classList.toggle('show', selected.size > 0);
+  document.getElementById('sel-count').textContent = selected.size;
+}
+
+// ─── 事件 ───
+document.getElementById('search').addEventListener('input', e => {
+  searchQ = e.target.value;
+  refreshList();
+});
+
+document.querySelectorAll('[data-view]').forEach(el => {
+  el.onclick = () => {
+    currentView = el.dataset.view;
+    document.querySelectorAll('[data-view]').forEach(x => x.classList.remove('active'));
+    el.classList.add('active');
+    refreshList();
+  };
+});
+
+document.getElementById('check-all').onclick = (e) => {
+  if (e.target.checked) viewBookmarks.forEach(b => selected.add(b.url));
+  else viewBookmarks.forEach(b => selected.delete(b.url));
+  renderListRows();
+  updateBulkBar();
+};
+
+document.getElementById('bulk-cancel').onclick = () => {
+  selected.clear();
+  renderListRows();
+  updateBulkBar();
+};
+
+document.getElementById('bulk-del').onclick = async () => {
+  if (!confirm(`删除 ${selected.size} 条书签？`)) return;
+  for (const url of selected) {
+    await window.api.removeBookmark(currentProfileId, url);
+  }
+  selected.clear();
+  await refreshList();
+  await refreshProfiles();
+};
+
+document.getElementById('bulk-export').onclick = async () => {
+  alert('导出选中：使用「💾 导出」按钮先导出全部，未来版本会支持选中导出。');
+};
+
+document.getElementById('btn-import-chrome').onclick = async () => {
+  const r = await window.api.importBookmarksFromChrome(currentProfileId);
+  if (r && r.ok) alert(`✓ 已导入 ${r.count} 条（自动去重）`);
+  else alert('✗ ' + (r && r.msg || '失败'));
+  await refreshList();
+  await refreshProfiles();
+};
+
+document.getElementById('btn-import-html').onclick = async () => {
+  const n = await window.api.importBookmarksHtml(currentProfileId);
+  alert(`✓ 已导入 ${n} 条`);
+  await refreshList();
+  await refreshProfiles();
+};
+
+document.getElementById('btn-export-html').onclick = async () => {
+  const fp = await window.api.exportBookmarksHtml(currentProfileId);
+  if (fp) alert(`✓ 已导出\n${fp}`);
+};
+
+// 添加
+document.getElementById('btn-add').onclick = () => {
+  document.getElementById('add-name').value = '';
+  document.getElementById('add-url').value = '';
+  document.getElementById('add-overlay').classList.add('show');
+  setTimeout(() => document.getElementById('add-url').focus(), 50);
+};
+document.getElementById('add-cancel').onclick = () =>
+  document.getElementById('add-overlay').classList.remove('show');
+document.getElementById('add-ok').onclick = async () => {
+  const url = document.getElementById('add-url').value.trim();
+  const title = document.getElementById('add-name').value.trim() || url;
+  if (!url) return;
+  await window.api.addBookmark(currentProfileId, { url, title });
+  document.getElementById('add-overlay').classList.remove('show');
+  await refreshList();
+  await refreshProfiles();
+};
+document.getElementById('add-overlay').addEventListener('click', e => {
+  if (e.target.id === 'add-overlay') e.target.classList.remove('show');
+});
+
+// 监听书签变化（其它窗口加书签时实时刷新）
+window.api.onBookmarksChanged((pid) => {
+  if (pid === currentProfileId) refreshList();
+  refreshProfiles();
+});
+
+// 主进程通知切换 profile
+window.api.onBookmarkSwitchProfile((pid) => switchProfile(pid));
+
+// 启动
+(async () => {
+  // 视图默认全部
+  document.querySelector('[data-view="all"]').classList.add('active');
+
+  // 默认从 URL 参数读 profileId，否则取第一个
+  const urlParams = new URLSearchParams(location.search);
+  const initialId = urlParams.get('profile');
+  profiles = await window.api.listProfiles();
+  const target = (initialId && profiles.find(p => p.id === initialId)) ? initialId : profiles[0]?.id;
+  if (target) await switchProfile(target);
+
+  // 设标题含版本号
+  const v = await window.api.appVersion();
+  document.getElementById('title').textContent = `书签管理  ·  v${v}`;
+})();
+</script>
+</body>
+</html>

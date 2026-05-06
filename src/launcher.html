@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Meowser — 工作区</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    background: #161618;
+    color: #ededed;
+    -webkit-app-region: drag;
+    -webkit-user-select: none;
+    overflow: hidden;
+  }
+  /* 顶部命令栏（占 30 让 traffic light 不挡） */
+  .topbar { height: 38px; background: #1c1c1e; border-bottom: 0.5px solid rgba(255,255,255,0.06);
+            display:flex; align-items:center; padding: 0 14px 0 84px; }
+  .cmdbar { flex: 1; height: 26px; background: rgba(255,255,255,0.06); border-radius: 5px;
+            border: 0.5px solid rgba(255,255,255,0.10); padding: 4px 10px; font-size: 11px;
+            color: rgba(255,255,255,0.4); font-family: ui-monospace, monospace;
+            display: flex; align-items: center; gap: 6px; }
+  .cmdbar .kbd { margin-left: auto; padding: 1px 6px; background: rgba(255,255,255,0.06);
+                 border-radius: 3px; font-size: 10px; }
+
+  .header { padding: 16px 20px 12px; background: #1c1c1e; border-bottom: 0.5px solid rgba(255,255,255,0.06);
+            -webkit-app-region: no-drag; }
+  .h-title { font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+             font-family: ui-monospace, monospace; }
+  .h-title .dot { color: #4ade80; }
+  .h-title .count { font-size: 10px; padding: 2px 7px; background: rgba(255,255,255,0.06);
+                    border-radius: 3px; color: rgba(255,255,255,0.5); margin-left: auto; }
+  .h-actions { display: flex; gap: 4px; margin-top: 2px; }
+  .h-sub { font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 6px; }
+  .pill { padding: 4px 10px; background: rgba(255,255,255,0.06); border: 0.5px solid rgba(255,255,255,0.10);
+          border-radius: 5px; color: rgba(255,255,255,0.85); cursor: pointer;
+          font-family: ui-monospace, monospace; font-size: 11px; -webkit-app-region: no-drag; }
+  .pill:hover { background: rgba(255,255,255,0.10); }
+  .pill.primary { background: rgba(74,222,128,0.10); color: #4ade80; border-color: #4ade80; }
+
+  /* 列表表头 */
+  .col-head { display: grid; grid-template-columns: 4px 28px 1fr 60px 160px 32px 28px 60px;
+              gap: 8px; padding: 8px 16px; font-family: ui-monospace, monospace;
+              font-size: 9px; color: rgba(255,255,255,0.35); text-transform: uppercase;
+              border-bottom: 0.5px solid rgba(255,255,255,0.06); }
+  .col-head > div:nth-child(3) { padding-left: 4px; }
+  .col-head > div:nth-child(4),
+  .col-head > div:nth-child(5) { text-align: center; }
+
+  /* 列表 */
+  .list { background: #0e0e10; height: calc(100vh - 38px - 80px - 32px - 64px - 36px); overflow-y: auto;
+          -webkit-app-region: no-drag; }
+  .row { display: grid; grid-template-columns: 4px 28px 1fr 60px 160px 32px 28px 60px;
+         gap: 8px; align-items: center; padding: 10px 16px;
+         border-bottom: 0.5px solid rgba(255,255,255,0.04); cursor: default; }
+  .row:hover { background: rgba(255,255,255,0.03); }
+  .theme-bar { width: 4px; height: 32px; border-radius: 2px; }
+  .emoji { width: 28px; height: 28px; background: rgba(255,255,255,0.04); border-radius: 5px;
+           display: flex; align-items: center; justify-content: center; font-size: 16px; }
+  .info-name { font-size: 13px; font-weight: 600; }
+  .info-note { font-size: 11px; color: rgba(255,255,255,0.5); }
+  .mode { font-family: ui-monospace, monospace; font-size: 10px; padding: 3px 0;
+          border-radius: 9px; text-align: center; }
+  .mode.work  { background: rgba(93,173,226,0.10); color: #5dade2; }
+  .mode.slack { background: rgba(236,72,153,0.10); color: #ec4899; }
+  .proxy { font-family: ui-monospace, monospace; font-size: 10px; text-align: center;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .proxy.via { color: #4ade80; }
+  .proxy.direct { color: rgba(255,255,255,0.35); }
+  .gear, .run { border: none; cursor: pointer; border-radius: 5px; height: 26px;
+                font-family: ui-monospace, monospace; font-weight: 700; }
+  .gear { background: rgba(255,255,255,0.06); border: 0.5px solid rgba(255,255,255,0.10);
+          color: rgba(255,255,255,0.7); font-size: 12px; }
+  .run { background: #4ade80; color: #0e0e10; font-size: 11px; }
+  .run:hover { background: #3ec873; }
+  .run:active { transform: scale(0.97); }
+
+  /* 底部 cookie 提示 */
+  .tip { padding: 12px 20px; background: rgba(255,149,0,0.08); border-top: 1px solid rgba(255,149,0,0.20);
+         display: flex; gap: 12px; align-items: center; }
+  .tip-ico { width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0;
+             background: linear-gradient(135deg, #ff9500, #ff3b30);
+             display: flex; align-items: center; justify-content: center; font-size: 14px; }
+  .tip-text { flex: 1; font-size: 11px; line-height: 1.5; }
+  .tip-text b { color: #ffd60a; }
+
+  .footer { padding: 8px 20px; background: #0e0e10; border-top: 0.5px solid rgba(255,255,255,0.06);
+            display: flex; justify-content: space-between;
+            font-family: ui-monospace, monospace; font-size: 10px;
+            color: rgba(255,255,255,0.35); }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="cmdbar">🔍&nbsp; 搜索工作区... <span class="kbd">⌘K</span></div>
+  </div>
+
+  <div class="header">
+    <div class="h-title">
+      <span class="dot">●</span> WORKSPACES
+      <span class="count" id="count">0</span>
+    </div>
+    <div class="h-sub">每个工作区独立 Cookie / 缓存 / 代理 · 数据本地存储 · <b>Chromium 引擎</b>，支持扩展</div>
+    <div class="h-actions" style="margin-top:10px; justify-content:flex-end; gap:6px; flex-wrap:wrap;">
+      <button class="pill" id="btn-arrange">▦ 摆放</button>
+      <button class="pill" id="btn-ext-local">📦 本地装</button>
+      <button class="pill" id="btn-ext-store">🛒 在线装</button>
+      <button class="pill" id="btn-export">📤 导出</button>
+      <button class="pill" id="btn-import">📥 导入</button>
+      <button class="pill" id="btn-incog">🕶 无痕</button>
+      <button class="pill" id="btn-bm">📚 书签</button>
+      <button class="pill primary" id="btn-new">＋ 新建</button>
+    </div>
+    <div id="arrange-panel" style="display:none; margin-top:10px; padding:10px; background:rgba(255,255,255,0.04); border-radius:6px; -webkit-app-region:no-drag;">
+      <div style="font-size:10px; color:rgba(255,255,255,0.5); margin-bottom:6px; font-family:ui-monospace,monospace; text-transform:uppercase;">EDGE</div>
+      <div style="display:flex; gap:4px; margin-bottom:8px;">
+        <button class="pill" data-edge="left">⬅ 左</button>
+        <button class="pill" data-edge="right">➡ 右</button>
+        <button class="pill" data-edge="top">⬆ 上</button>
+        <button class="pill" data-edge="bottom">⬇ 下</button>
+      </div>
+      <div style="font-size:10px; color:rgba(255,255,255,0.5); margin-bottom:6px; font-family:ui-monospace,monospace; text-transform:uppercase;">STYLE</div>
+      <div style="display:flex; gap:4px;">
+        <button class="pill" data-style="tile">▦ 平铺</button>
+        <button class="pill" data-style="cascade">▥ 叠放</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-head">
+    <div></div>
+    <div></div>
+    <div>NAME / NOTE</div>
+    <div>MODE</div>
+    <div>PROXY</div>
+    <div></div>
+    <div></div>
+    <div></div>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <div class="tip">
+    <div class="tip-ico">🍪</div>
+    <div class="tip-text">
+      <b>Chromium 内核 — 1Password 扩展、uBlock 等全部支持</b><br>
+      <span style="color:rgba(255,255,255,0.5);font-size:10px;">点「📦 装扩展」选 unpacked extension 目录即可（开发者模式安装）</span>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div>📂 ~/.meowser/profiles.json</div>
+    <div><span id="app-ver">v?.?.?</span> · Electron <span id="v"></span></div>
+  </div>
+
+<script>
+const themeColors = { red: '#FF3B30', green: '#34C759', yellow: '#FFCC00' };
+
+function fmtProxy(px) {
+  if (!px) return { txt: 'DIRECT', cls: 'direct' };
+  if (px.type === 'socks5' || px.type === 'http' || px.type === 'https') {
+    return { txt: `${px.type} ${px.host}:${px.port}`, cls: 'via' };
+  }
+  if (px.type === 'system') return { txt: 'system', cls: 'direct' };
+  return { txt: 'DIRECT', cls: 'direct' };
+}
+
+function render(profiles) {
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  document.getElementById('count').textContent = profiles.length;
+  for (const p of profiles) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    const px = fmtProxy(p.proxy);
+    row.innerHTML = `
+      <div class="theme-bar" style="background:${themeColors[p.theme] || '#FFCC00'}"></div>
+      <div class="emoji">${p.emoji || '🐱'}</div>
+      <div>
+        <div class="info-name">${escapeHtml(p.name || '(未命名)')}</div>
+        <div class="info-note">${escapeHtml(p.note || '')}</div>
+      </div>
+      <div class="mode ${p.mode === 'slack' ? 'slack' : 'work'}">${p.mode === 'slack' ? 'slack' : 'work'}</div>
+      <div class="proxy ${px.cls}">${px.txt}</div>
+      <button class="gear" title="编辑">⚙</button>
+      <button class="gear" title="无痕打开">🕶</button>
+      <button class="run">▶ RUN</button>
+    `;
+    const [editBtn, incogBtn] = row.querySelectorAll('.gear');
+    row.querySelector('.run').addEventListener('click', (e) => {
+      window.api.launch(p, { small: e.shiftKey });
+    });
+    editBtn.addEventListener('click', () => window.api.openEdit(p));
+    incogBtn.addEventListener('click', () => window.api.launch(p, { incognito: true }));
+    list.appendChild(row);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('btn-new').addEventListener('click', () => window.api.openEdit(null));
+
+document.getElementById('btn-ext-local').addEventListener('click', async () => {
+  const r = await window.api.installLocalExtension();
+  if (r) alert(`已拷到:\n${r.dst}\n\n下次启动「${r.profileId}」生效。`);
+});
+
+document.getElementById('btn-ext-store').addEventListener('click', async () => {
+  const url = await window.api.askText({
+    title: '在线安装扩展',
+    label: 'CHROME WEB STORE URL / 扩展 ID',
+    placeholder: 'https://chromewebstore.google.com/detail/.../cjpalhd...',
+  });
+  if (!url) return;
+  const r = await window.api.installExtensionFromStore(url.trim());
+  if (r && r.ok) {
+    alert(`✓ 装好了：${r.name}\n路径: ${r.dst}\n\n重启该工作区窗口生效。`);
+  } else {
+    alert(`✗ 失败：${r && r.msg ? r.msg : '未知错误'}`);
+  }
+});
+
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const r = await window.api.exportConfig();
+  if (!r) return;
+  if (r.error) alert('导出失败: ' + r.error);
+  else alert(`✓ 已导出\n${r.path}\n${(r.size/1024).toFixed(1)} KB`);
+});
+
+document.getElementById('btn-import').addEventListener('click', async () => {
+  const r = await window.api.importConfig();
+  if (!r) return;
+  if (r.error) alert('导入失败: ' + r.error);
+  else alert('✓ 导入完成');
+});
+
+document.getElementById('btn-bm').addEventListener('click', () => {
+  window.api.openBookmarkManager(null);
+});
+
+document.getElementById('btn-incog').addEventListener('click', async () => {
+  const profiles = await window.api.listProfiles();
+  if (profiles.length === 0) return;
+  // 默认用第一个 profile 起一个无痕；用户在窗口里改 profile 仅本会话
+  window.api.launch(profiles[0], { incognito: true });
+});
+
+// 摆放面板
+let arrangeEdge = 'right', arrangeStyle = 'tile';
+const arrangePanel = document.getElementById('arrange-panel');
+document.getElementById('btn-arrange').addEventListener('click', () => {
+  arrangePanel.style.display = arrangePanel.style.display === 'none' ? 'block' : 'none';
+});
+arrangePanel.querySelectorAll('[data-edge]').forEach(b => {
+  b.onclick = () => {
+    arrangeEdge = b.dataset.edge;
+    arrangePanel.querySelectorAll('[data-edge]').forEach(x => x.classList.remove('primary'));
+    b.classList.add('primary');
+    window.api.arrange(arrangeEdge, arrangeStyle);
+  };
+});
+arrangePanel.querySelectorAll('[data-style]').forEach(b => {
+  b.onclick = () => {
+    arrangeStyle = b.dataset.style;
+    arrangePanel.querySelectorAll('[data-style]').forEach(x => x.classList.remove('primary'));
+    b.classList.add('primary');
+    window.api.arrange(arrangeEdge, arrangeStyle);
+  };
+});
+
+window.api.onProfilesChanged(async () => {
+  render(await window.api.listProfiles());
+});
+
+(async () => {
+  const profiles = await window.api.listProfiles();
+  render(profiles);
+  document.getElementById('v').textContent = window.api.electronVersion;
+  const v = await window.api.appVersion();
+  document.getElementById('app-ver').textContent = 'v' + v;
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+node_modules/
+dist/mac/
+dist/mac-arm64/
+dist/.icon-icns/
+dist/builder-debug.yml
+dist/*.blockmap
+dist/meowser-src-*.zip
+dist/Meowser-*
+.DS_Store
+.claude/.last_pkg_mtime
+.claude/.dmg_building.lock
+.claude/dmg-build-*.log
+_preview/
+*.log

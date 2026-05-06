@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Meowser</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    background: #ffffff; color: #1d1d1f;
+    -webkit-user-select: none;
+    display: flex; flex-direction: column;
+  }
+
+  .profile-strip {
+    height: 24px; color: white; font-size: 11px; font-weight: 700;
+    display: flex; align-items: center; padding: 0 12px; gap: 8px;
+    -webkit-app-region: drag; flex-shrink: 0; cursor: pointer;
+  }
+  .profile-strip .note { font-weight: 400; opacity: 0.85; font-size: 10px; }
+  .profile-strip .incog { background: rgba(0,0,0,0.4); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+  .profile-strip .ver { margin-left: auto; background: rgba(0,0,0,0.18); padding: 1px 6px; border-radius: 3px; font-size: 9px; font-family: ui-monospace, monospace; font-weight: 600; opacity: 0.85; }
+  .profile-strip .mem { background: rgba(0,0,0,0.25); padding: 1px 7px; border-radius: 3px; font-size: 10px; font-family: ui-monospace, monospace; font-weight: 600; -webkit-app-region: no-drag; cursor: help; }
+  .profile-strip .mem.warn { background: rgba(255,149,0,0.7); }
+  .profile-strip .mem.danger { background: rgba(255,59,48,0.8); }
+
+  .toolbar {
+    height: 36px; background: #f5f5f7;
+    border-bottom: 0.5px solid rgba(0,0,0,0.08);
+    display: flex; align-items: center; gap: 4px; padding: 0 8px;
+    flex-shrink: 0; -webkit-app-region: no-drag;
+  }
+  .btn {
+    height: 24px; padding: 0 10px;
+    background: white; color: #1d1d1f; border-radius: 5px;
+    border: 0.5px solid rgba(0,0,0,0.10);
+    cursor: pointer; font-size: 12px;
+  }
+  .btn:hover { background: #ececef; }
+  .btn:active { transform: scale(0.97); }
+  .btn.on { background: #1d1d1f; color: white; border-color: #1d1d1f; }
+  .url {
+    flex: 1; height: 26px; padding: 0 12px;
+    border: 0.5px solid rgba(0,0,0,0.12); border-radius: 5px;
+    font-size: 13px; color: #1d1d1f; background: white; outline: none;
+  }
+  .url:focus { border-color: #007aff; box-shadow: 0 0 0 3px rgba(0,113,227,0.10); }
+  .pill {
+    height: 24px; padding: 0 8px;
+    background: rgba(0,0,0,0.04); border-radius: 5px;
+    border: 0.5px solid rgba(0,0,0,0.08);
+    font-size: 11px; color: #424245;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .opacity-wrap input[type=range] { width: 70px; }
+
+  /* 书签栏 */
+  .bmbar {
+    height: 30px; background: #fafafa;
+    border-bottom: 0.5px solid rgba(0,0,0,0.06);
+    display: flex; align-items: center; gap: 2px; padding: 0 8px;
+    overflow-x: auto; overflow-y: hidden;
+    flex-shrink: 0; -webkit-app-region: no-drag;
+    scrollbar-width: none;
+  }
+  .bmbar::-webkit-scrollbar { display: none; }
+  .bm {
+    display: inline-flex; align-items: center; gap: 5px;
+    height: 22px; padding: 0 8px;
+    background: transparent; border: 0.5px solid transparent; border-radius: 5px;
+    font-size: 11px; color: #1d1d1f; cursor: pointer;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .bm:hover { background: rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.08); }
+  .bm img { width: 14px; height: 14px; flex-shrink: 0; }
+  .bm.empty { color: #86868b; font-style: italic; cursor: default; }
+  .bm.empty:hover { background: transparent; border-color: transparent; }
+
+  webview { flex: 1; width: 100%; height: 100%; border: none; }
+
+  body.small .toolbar { height: 30px; padding: 0 4px; gap: 2px; }
+  body.small .btn { height: 22px; padding: 0 5px; font-size: 11px; }
+  body.small .url { height: 22px; font-size: 11px; padding: 0 6px; }
+  body.small .pill { display: none; }
+  body.small .bmbar { display: none; }
+  body.small .opacity-wrap { display: none; }
+  body.small #fwd, body.small #home, body.small #go,
+  body.small #star, body.small #bm-menu, body.small #auto, body.small #incog,
+  body.small #open-ext, body.small #toggle-size { display: none; }
+
+  /* 简易 context menu */
+  .cmenu {
+    position: fixed; background: white; border: 0.5px solid rgba(0,0,0,0.15);
+    border-radius: 6px; padding: 4px; font-size: 12px; min-width: 140px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.15); z-index: 9999;
+  }
+  .cmenu div {
+    padding: 6px 10px; cursor: pointer; border-radius: 4px;
+  }
+  .cmenu div:hover { background: rgba(0,0,0,0.06); }
+  .cmenu div.danger { color: #ff3b30; }
+</style>
+</head>
+<body>
+  <div class="profile-strip" id="strip" title="双击切换大窗/小窗"></div>
+
+  <div class="toolbar">
+    <button class="btn" id="back">←</button>
+    <button class="btn" id="fwd">→</button>
+    <button class="btn" id="reload">↻</button>
+    <button class="btn" id="home">🏠</button>
+    <input class="url" id="url" placeholder="输入网址或关键词">
+    <button class="btn" id="go">查询</button>
+    <button class="btn" id="star" title="加入书签">⭐</button>
+    <button class="btn" id="bm-menu" title="书签管理">📚</button>
+    <span class="pill" id="proxy-pill">DIRECT</span>
+    <div class="opacity-wrap" title="不透明度"><input type="range" id="opacity" min="30" max="100" value="100"></div>
+    <button class="btn" id="pin" title="置顶">📌</button>
+    <button class="btn" id="auto" title="失焦自动缩回小窗">🪶</button>
+    <button class="btn" id="incog" title="切换到无痕窗口">🕶</button>
+    <button class="btn" id="toggle-size" title="切换大窗/小窗">⤢</button>
+    <button class="btn" id="open-ext" title="Safari 打开 (Shift = Chrome)">🌐</button>
+  </div>
+
+  <div class="bmbar" id="bmbar"></div>
+
+  <!-- partition 在 JS 中根据 profile 设置，必须在 src 之前 -->
+  <div id="wv-host" style="flex:1;display:flex"></div>
+
+  <div id="cmenu" class="cmenu" style="display:none"></div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const profile = JSON.parse(params.get('profile') || '{}');
+const initialUrl = params.get('initialUrl') || 'https://www.google.com';
+const isSmall = params.get('small') === '1';
+const isIncognito = params.get('incognito') === '1';
+
+const themeColors = { red: '#FF3B30', green: '#34C759', yellow: '#FFCC00' };
+const themeColor = themeColors[profile.theme] || '#FFCC00';
+
+if (isSmall) document.body.classList.add('small');
+
+const strip = document.getElementById('strip');
+strip.style.background = themeColor;
+strip.innerHTML =
+  `<span>${profile.emoji || '🐱'}  ${profile.name || ''}</span>`
+  + (profile.note ? `<span class="note">· ${profile.note}</span>` : '')
+  + (isIncognito ? '<span class="incog">🕶 无痕</span>' : '')
+  + '<span class="ver" id="ver">v?.?.?</span>'
+  + '<span class="mem" id="mem" title="主进程 + webview 子进程总占用，每 5 秒刷新">...</span>';
+
+window.api.appVersion().then(v => {
+  const el = document.getElementById('ver'); if (el) el.textContent = 'v' + v;
+});
+
+// 内存徽标
+function fmtMem(kb) {
+  const mb = kb / 1024;
+  if (mb < 1024) return mb.toFixed(0) + ' MB';
+  return (mb / 1024).toFixed(2) + ' GB';
+}
+window.api.onMemUpdate(({ kb, webviews }) => {
+  const el = document.getElementById('mem');
+  if (!el) return;
+  const mb = kb / 1024;
+  el.textContent = fmtMem(kb);
+  el.title = `主进程 + ${webviews} 个 webview 子进程\n每 5 秒刷新`;
+  el.classList.toggle('warn', mb >= 500 && mb < 1024);
+  el.classList.toggle('danger', mb >= 1024);
+});
+
+document.body.style.boxShadow = `inset 0 0 0 3px ${isIncognito ? '#1d1d1f' : themeColor}`;
+
+async function doToggleSize() {
+  const nowSmall = await window.api.toggleSize();
+  document.body.classList.toggle('small', nowSmall);
+}
+// 双击作为辅助（macOS drag region 会先触发系统 zoom，所以加 toolbar 按钮）
+strip.addEventListener('dblclick', e => { e.preventDefault(); doToggleSize(); });
+document.getElementById('toggle-size').onclick = doToggleSize;
+window.api.onResized(({ small }) => document.body.classList.toggle('small', small));
+
+// proxy pill
+const px = profile.proxy || { type: 'direct' };
+const proxyPill = document.getElementById('proxy-pill');
+if (px.type === 'http' || px.type === 'https' || px.type === 'socks5') {
+  const t = (px.type === 'https') ? 'http(s)' : (px.type === 'http' ? 'http(s)' : px.type);
+  proxyPill.textContent = `${t.toUpperCase()} :${px.port}`;
+  proxyPill.style.color = '#34C759';
+} else if (px.type === 'system') {
+  proxyPill.textContent = 'SYSTEM';
+} else {
+  proxyPill.textContent = 'DIRECT';
+}
+
+// 创建 webview 并设 partition (跟主进程 session 同名才能共用代理/cookie/扩展)
+const wv = document.createElement('webview');
+wv.id = 'wv';
+const partition = isIncognito
+  ? `meowser-incognito-${profile.id}-${Date.now()}`
+  : `persist:meowser-${profile.id}`;
+wv.setAttribute('partition', partition);
+wv.setAttribute('allowpopups', '');
+wv.style.cssText = 'flex:1;width:100%;height:100%;border:none;display:flex';
+document.getElementById('wv-host').appendChild(wv);
+
+const urlInput = document.getElementById('url');
+
+function navigate(text) {
+  text = (text || '').trim();
+  if (!text) return;
+  let url;
+  if (text.includes('://') || text.startsWith('file:')) url = text;
+  else if (!text.includes(' ') && text.includes('.')) url = 'https://' + text;
+  else url = 'https://www.google.com/search?q=' + encodeURIComponent(text);
+  wv.src = url;
+}
+
+document.getElementById('back').onclick = () => wv.canGoBack() && wv.goBack();
+document.getElementById('fwd').onclick = () => wv.canGoForward() && wv.goForward();
+document.getElementById('reload').onclick = () => wv.reload();
+document.getElementById('home').onclick = async () => { wv.src = await window.api.homeUrl(profile); };
+document.getElementById('go').onclick = () => navigate(urlInput.value);
+urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') navigate(urlInput.value); });
+
+// 透明度
+document.getElementById('opacity').addEventListener('input', e => {
+  window.api.setOpacity(e.target.value / 100);
+});
+
+// 置顶
+const pinBtn = document.getElementById('pin');
+pinBtn.classList.add('on');
+pinBtn.onclick = async () => {
+  const pinned = await window.api.togglePin();
+  pinBtn.classList.toggle('on', pinned);
+  pinBtn.textContent = pinned ? '📌' : '📍';
+};
+
+// 失焦缩回
+const autoBtn = document.getElementById('auto');
+autoBtn.onclick = async () => {
+  const v = !autoBtn.classList.contains('on');
+  await window.api.setAutoShrink(v);
+  autoBtn.classList.toggle('on', v);
+};
+
+// 无痕：当前如果不是无痕则关掉重开成无痕
+const incogBtn = document.getElementById('incog');
+if (isIncognito) {
+  incogBtn.classList.add('on');
+  incogBtn.disabled = true;
+  incogBtn.title = '当前已是无痕窗口';
+  incogBtn.style.opacity = '0.6';
+  incogBtn.style.cursor = 'default';
+}
+incogBtn.onclick = () => {
+  if (isIncognito) return;
+  if (!confirm('切换为无痕模式会关闭当前窗口并新建一个无痕窗口（不保留 cookie/缓存）。确定？')) return;
+  window.api.relaunchIncognito();
+};
+
+// 外部打开
+document.getElementById('open-ext').onclick = (e) => {
+  const u = wv.getURL();
+  if (!u || u.startsWith('about:') || u.startsWith('file:')) return;
+  window.api.openExternal(u, e.shiftKey ? 'chrome' : 'safari');
+};
+
+// 书签菜单
+document.getElementById('bm-menu').onclick = (e) => {
+  e.stopPropagation();
+  if (isIncognito) { alert('无痕模式不操作书签'); return; }
+  const r = e.target.getBoundingClientRect();
+  showContextMenu(r.left, r.bottom + 4, [
+    { label: '⭐ 加入当前页', click: () => document.getElementById('star').click() },
+    { label: '📥 从 Chrome 导入', click: async () => {
+        const r = await window.api.importBookmarksFromChrome(profile.id);
+        if (r && r.ok) alert(`✓ 导入 ${r.count} 条`);
+        else alert('✗ ' + (r && r.msg || '未知错误'));
+    }},
+    { label: '📥 从 HTML 文件导入', click: async () => {
+        const n = await window.api.importBookmarksHtml(profile.id);
+        if (n > 0) alert(`✓ 导入 ${n} 条`);
+    }},
+    { label: '📤 导出为 HTML', click: async () => {
+        const fp = await window.api.exportBookmarksHtml(profile.id);
+        if (fp) alert('✓ 已导出:\n' + fp);
+    }},
+  ]);
+};
+
+// 打开书签管理（📚）
+document.getElementById('bm-menu').onclick = () => {
+  window.api.openBookmarkManager(profile.id);
+};
+
+// 添加书签
+document.getElementById('star').onclick = async () => {
+  if (isIncognito) { alert('无痕模式不保存书签'); return; }
+  const u = wv.getURL();
+  if (!u || u.startsWith('about:') || u.startsWith('file:')) return;
+  const title = wv.getTitle ? wv.getTitle() : u;
+  await window.api.addBookmark(profile.id, { url: u, title });
+};
+
+// URL 同步
+wv.addEventListener('did-navigate', e => urlInput.value = e.url);
+wv.addEventListener('did-navigate-in-page', e => urlInput.value = e.url);
+wv.addEventListener('did-finish-load', () => urlInput.value = wv.getURL());
+
+// 默认页
+wv.src = initialUrl;
+
+// 新窗口拦截
+wv.addEventListener('new-window', e => { e.preventDefault(); wv.src = e.url; });
+wv.addEventListener('dom-ready', () => {
+  try {
+    const wc = wv.getWebContents && wv.getWebContents();
+    if (wc && wc.setWindowOpenHandler) {
+      wc.setWindowOpenHandler(({ url }) => { wv.src = url; return { action: 'deny' }; });
+    }
+  } catch {}
+});
+
+// ─── 书签栏 ───
+async function renderBmbar() {
+  const bar = document.getElementById('bmbar');
+  bar.innerHTML = '';
+  if (isIncognito) {
+    bar.innerHTML = '<span class="bm empty">🕶 无痕模式 — 不显示书签</span>';
+    return;
+  }
+  const list = await window.api.listBookmarks(profile.id);
+  if (list.length === 0) {
+    bar.innerHTML = '<span class="bm empty">无书签 — 点 ⭐ 添加，或在启动器中导入</span>';
+    return;
+  }
+  list.forEach(b => {
+    const el = document.createElement('div');
+    el.className = 'bm';
+    let host = '';
+    try { host = new URL(b.url).hostname; } catch {}
+    el.innerHTML = `<img src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(host)}" onerror="this.style.display='none'"><span>${escapeHtml(b.title || b.url)}</span>`;
+    el.title = b.url;
+    el.onclick = () => navigate(b.url);
+    el.oncontextmenu = (e) => {
+      e.preventDefault();
+      showContextMenu(e.clientX, e.clientY, [
+        { label: '在浏览器打开', click: () => navigate(b.url) },
+        { label: '系统 Safari 打开', click: () => window.api.openExternal(b.url, 'safari') },
+        { label: '系统 Chrome 打开', click: () => window.api.openExternal(b.url, 'chrome') },
+        { label: '复制链接', click: () => window.api.copyText(b.url) },
+        { label: '删除书签', danger: true, click: async () => {
+            await window.api.removeBookmark(profile.id, b.url);
+        }},
+      ]);
+    };
+    bar.appendChild(el);
+  });
+}
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function showContextMenu(x, y, items) {
+  const m = document.getElementById('cmenu');
+  m.innerHTML = '';
+  items.forEach(it => {
+    const d = document.createElement('div');
+    d.textContent = it.label;
+    if (it.danger) d.classList.add('danger');
+    d.onclick = () => { hideContextMenu(); it.click(); };
+    m.appendChild(d);
+  });
+  m.style.display = 'block';
+  m.style.left = Math.min(x, window.innerWidth - 160) + 'px';
+  m.style.top = Math.min(y, window.innerHeight - items.length * 30) + 'px';
+}
+function hideContextMenu() { document.getElementById('cmenu').style.display = 'none'; }
+document.addEventListener('click', hideContextMenu);
+document.addEventListener('contextmenu', (e) => {
+  if (!e.target.closest('.bm') && !e.target.closest('#cmenu')) hideContextMenu();
+});
+
+window.api.onBookmarksChanged((pid) => { if (pid === profile.id) renderBmbar(); });
+renderBmbar();
+</script>
+</body>
+</html>
