@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>编辑工作区</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    background: #161618; color: #ededed;
+    -webkit-app-region: drag;
+    -webkit-user-select: none;
+    padding: 38px 24px 24px;
+    overflow-y: auto;
+  }
+  h1 { font-size: 14px; font-family: ui-monospace, monospace;
+       color: rgba(255,255,255,0.6); margin-bottom: 18px;
+       text-transform: uppercase; letter-spacing: 0.5px; }
+  .row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px;
+         -webkit-app-region: no-drag; }
+  label { font-size: 11px; color: rgba(255,255,255,0.5);
+          text-transform: uppercase; letter-spacing: 0.5px;
+          font-family: ui-monospace, monospace; }
+  input, select {
+    height: 34px; padding: 0 12px; font-size: 13px;
+    background: rgba(255,255,255,0.06); color: #ededed;
+    border: 0.5px solid rgba(255,255,255,0.10); border-radius: 6px;
+    outline: none;
+  }
+  input:focus, select:focus { border-color: #4ade80; background: rgba(255,255,255,0.08); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .pickers { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip {
+    width: 36px; height: 36px;
+    background: rgba(255,255,255,0.06);
+    border: 1.5px solid transparent; border-radius: 8px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+  }
+  .chip.sel { border-color: #4ade80; background: rgba(74,222,128,0.10); }
+  .theme-chip { width: 44px; height: 28px; border-radius: 6px; cursor: pointer;
+                border: 2px solid transparent; }
+  .theme-chip.sel { border-color: #fff; }
+  .checkbox { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .checkbox input[type=checkbox] { width: 16px; height: 16px; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;
+             -webkit-app-region: no-drag; }
+  button.btn {
+    height: 32px; padding: 0 16px; font-size: 12px; font-weight: 600;
+    background: rgba(255,255,255,0.06); color: #ededed;
+    border: 0.5px solid rgba(255,255,255,0.10); border-radius: 6px;
+    cursor: pointer; font-family: ui-monospace, monospace;
+  }
+  button.btn:hover { background: rgba(255,255,255,0.10); }
+  button.btn.primary { background: #4ade80; color: #0e0e10; border-color: #4ade80; }
+  button.btn.danger { color: #ff453a; }
+  .proxy-fields { display: none; }
+  .proxy-fields.show { display: grid; }
+</style>
+</head>
+<body>
+<h1>● 工作区配置</h1>
+
+<div class="row">
+  <label>NAME</label>
+  <input id="name" placeholder="工作区名称">
+</div>
+
+<div class="row">
+  <label>NOTE</label>
+  <input id="note" placeholder="一句话说明">
+</div>
+
+<div class="grid2">
+  <div class="row">
+    <label>EMOJI</label>
+    <div class="pickers" id="emoji-picker"></div>
+  </div>
+  <div class="row">
+    <label>THEME</label>
+    <div class="pickers" id="theme-picker"></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="row">
+    <label>MODE</label>
+    <select id="mode">
+      <option value="work">work — 工作模式（书签首页）</option>
+      <option value="slack">slack — 摸鱼模式</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>显示书签首页</label>
+    <label class="checkbox"><input type="checkbox" id="show_bookmarks"> 工作模式时启用</label>
+  </div>
+</div>
+
+<div class="row">
+  <label>PROXY</label>
+  <select id="proxy_type">
+    <option value="direct">direct — 直连</option>
+    <option value="system">system — 系统代理</option>
+    <option value="http">http(s) — 同端口走 HTTP+HTTPS</option>
+    <option value="socks5">socks5</option>
+  </select>
+</div>
+
+<div class="row proxy-fields" id="proxy-fields">
+  <label>HOST : PORT</label>
+  <div class="grid3" style="grid-template-columns: 2fr 1fr;">
+    <input id="proxy_host" placeholder="127.0.0.1">
+    <input id="proxy_port" placeholder="1087" type="number">
+  </div>
+</div>
+
+<div class="actions">
+  <button class="btn danger" id="del">删除</button>
+  <div style="flex:1"></div>
+  <button class="btn" id="cancel">取消</button>
+  <button class="btn primary" id="save">保存</button>
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const incoming = JSON.parse(params.get('profile') || '{}');
+const isNew = !incoming.id;
+const profile = isNew
+  ? { id: 'p_' + Math.random().toString(36).slice(2, 8),
+      name: '', note: '', emoji: '🐱', mode: 'work', theme: 'yellow',
+      proxy: { type: 'direct' }, show_bookmarks: false }
+  : { ...incoming };
+
+document.getElementById('name').value = profile.name || '';
+document.getElementById('note').value = profile.note || '';
+document.getElementById('mode').value = profile.mode || 'work';
+document.getElementById('show_bookmarks').checked = !!profile.show_bookmarks;
+// 旧 https 类型 → 归一到 http
+const _pt = (profile.proxy && profile.proxy.type) || 'direct';
+document.getElementById('proxy_type').value = _pt === 'https' ? 'http' : _pt;
+document.getElementById('proxy_host').value = (profile.proxy && profile.proxy.host) || '';
+document.getElementById('proxy_port').value = (profile.proxy && profile.proxy.port) || '';
+
+if (isNew) document.getElementById('del').style.display = 'none';
+
+// emoji 选择
+const EMOJIS = ['🐱','💻','🎮','📚','🎵','🍿','💬','🛠','🌐','✈️','📝','🔬','🎨','💼','🚀','☕'];
+const ePick = document.getElementById('emoji-picker');
+EMOJIS.forEach(e => {
+  const c = document.createElement('div');
+  c.className = 'chip' + (profile.emoji === e ? ' sel' : '');
+  c.textContent = e;
+  c.onclick = () => {
+    profile.emoji = e;
+    ePick.querySelectorAll('.chip').forEach(x => x.classList.remove('sel'));
+    c.classList.add('sel');
+  };
+  ePick.appendChild(c);
+});
+
+// theme 选择
+const THEMES = [['yellow','#FFCC00'],['green','#34C759'],['red','#FF3B30']];
+const tPick = document.getElementById('theme-picker');
+THEMES.forEach(([k, color]) => {
+  const c = document.createElement('div');
+  c.className = 'theme-chip' + (profile.theme === k ? ' sel' : '');
+  c.style.background = color;
+  c.onclick = () => {
+    profile.theme = k;
+    tPick.querySelectorAll('.theme-chip').forEach(x => x.classList.remove('sel'));
+    c.classList.add('sel');
+  };
+  tPick.appendChild(c);
+});
+
+// proxy fields toggle
+const pf = document.getElementById('proxy-fields');
+function syncProxyFields() {
+  const t = document.getElementById('proxy_type').value;
+  pf.classList.toggle('show', t === 'http' || t === 'https' || t === 'socks5');
+}
+document.getElementById('proxy_type').addEventListener('change', syncProxyFields);
+syncProxyFields();
+
+document.getElementById('cancel').onclick = () => window.api.closeEdit();
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') window.api.closeEdit();
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) document.getElementById('save').click();
+});
+
+document.getElementById('del').onclick = async () => {
+  if (!confirm(`删除「${profile.name}」？数据目录不会动。`)) return;
+  await window.api.deleteProfile(profile.id);
+  window.api.closeEdit();
+};
+
+document.getElementById('save').onclick = async () => {
+  profile.name = document.getElementById('name').value.trim() || '(未命名)';
+  profile.note = document.getElementById('note').value.trim();
+  profile.mode = document.getElementById('mode').value;
+  profile.show_bookmarks = document.getElementById('show_bookmarks').checked;
+  const pt = document.getElementById('proxy_type').value;
+  if (pt === 'direct' || pt === 'system') {
+    profile.proxy = { type: pt };
+  } else {
+    profile.proxy = {
+      type: pt,
+      host: document.getElementById('proxy_host').value.trim() || '127.0.0.1',
+      port: parseInt(document.getElementById('proxy_port').value) || 1087,
+    };
+  }
+  await window.api.upsertProfile(profile);
+  window.api.closeEdit();
+};
+</script>
+</body>
+</html>
