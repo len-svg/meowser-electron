@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('api', {
   removeExtension: (profileId, dirName) => ipcRenderer.invoke('extension:remove', profileId, dirName),
   openExtensionsDir: (profileId) => ipcRenderer.invoke('extension:openDir', profileId),
   reloadExtensions: (profileId) => ipcRenderer.invoke('extension:reload', profileId),
+  registerWebviewTab: () => ipcRenderer.invoke('extension:registerWebviewTab'),
 
   // 日志
   openLogFile: () => ipcRenderer.invoke('log:openFile'),

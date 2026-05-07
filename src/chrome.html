@@ -596,6 +596,10 @@ wv.addEventListener('new-window', e => {
   if (m) { installFromStoreById(m[1]); return; }
   window.api.openInNewWindow(e.url);
 });
+// 把 webview 注册成扩展系统的 "tab"（chrome.tabs / chrome.action 等才能拿到当前页）
+wv.addEventListener('did-attach', () => {
+  if (window.api.registerWebviewTab) window.api.registerWebviewTab().catch(() => {});
+});
 wv.addEventListener('dom-ready', () => {
   try {
     const wc = wv.getWebContents && wv.getWebContents();

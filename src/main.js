@@ -11,6 +11,10 @@ const bm = require('./bookmarks_store');
 const crx = require('./crx');
 const migrate = require('./migrate');
 
+// 第三方扩展运行时（提供 chrome.* API + 商店原生安装支持）
+const { ElectronChromeExtensions } = require('electron-chrome-extensions');
+const { installChromeWebStore, installExtension, uninstallExtension } = require('electron-chrome-web-store');
+
 // ─── 数据目录 ───
 const DATA_DIR = path.join(os.homedir(), '.meowser');
 const PROFILES_PATH = path.join(DATA_DIR, 'profiles.json');
@@ -65,6 +69,10 @@ function homeUrlFor(profile) {
 const extLoaded = new Set();
 // key=`${profileId}|${dirName}` → { state:'loading'|'loaded'|'failed', error?, id?, manifestVersion? }
 const extStatus = new Map();
+// session → ElectronChromeExtensions 实例（每个 profile session 一个）
+const extensionsBySession = new WeakMap();
+// 已经初始化过 web store 的 session 记忆
+const webStoreInstalled = new WeakSet();
 
 // 解析 chrome i18n 占位 __MSG_xxx__
 function resolveMsg(extDir, manifest, value) {
@@ -102,34 +110,72 @@ function readManifest(extDir) {
   }
 }
 
-function loadExtensionsForSession(profileId, ses) {
+// 用 electron-chrome-web-store 接管扩展加载与商店安装；保留 extStatus 跟踪以便 UI 显示真实错误
+async function setupExtensionRuntime(profileId, ses) {
   const extDir = path.join(DATA_DIR, 'extensions', profileId);
-  if (!fs.existsSync(extDir)) return;
-  fs.readdirSync(extDir).forEach(name => {
-    const p = path.join(extDir, name);
-    let isDir = false;
-    try { isDir = fs.statSync(p).isDirectory(); } catch {}
-    if (!isDir) return;
-    const key = `${profileId}|${name}`;
-    const meta = readManifest(p);
-    extStatus.set(key, { state: 'loading', manifestVersion: meta.manifestVersion });
-    if (meta.parseError) {
-      extStatus.set(key, { state: 'failed', error: `manifest.json 解析失败: ${meta.parseError}`, manifestVersion: 0 });
-      console.error(`✗ 扩展 ${name}: manifest.json 解析失败 — ${meta.parseError}`);
-      return;
-    }
-    console.log(`→ 加载扩展 ${name} (MV${meta.manifestVersion}, "${meta.name}" v${meta.version})`);
-    ses.loadExtension(p, { allowFileAccess: true })
-      .then(ext => {
-        extStatus.set(key, { state: 'loaded', id: ext.id, manifestVersion: meta.manifestVersion });
-        console.log(`✓ 扩展加载成功: ${name} (id=${ext.id})`);
-      })
-      .catch(err => {
-        const msg = err && err.message ? err.message : String(err);
-        extStatus.set(key, { state: 'failed', error: msg, stack: err && err.stack, manifestVersion: meta.manifestVersion });
-        console.error(`✗ 扩展加载失败: ${name} (MV${meta.manifestVersion}) — ${msg}`);
+  fs.mkdirSync(extDir, { recursive: true });
+
+  // 1) chrome.* API 注入（chrome.tabs / chrome.action / popup / contextMenus 等）
+  if (!extensionsBySession.has(ses)) {
+    const ext = new ElectronChromeExtensions({
+      session: ses,
+      modulePath: path.join(__dirname, '..', 'node_modules', 'electron-chrome-extensions'),
+      createTab: async (details) => {
+        // 扩展请求开新 tab → 我们没 tab，转开新窗口
+        const profile = loadProfiles().find(p => p.id === profileId);
+        if (!profile) throw new Error('profile not found');
+        const win = createBrowserWindow(profile, { url: details.url || 'about:blank' });
+        // 等 dom-ready 后取 webContents
+        await new Promise(r => win.once('ready-to-show', r));
+        return [win.webContents, win];
+      },
+      selectTab: () => {},
+      removeTab: (tab, win) => { try { win.close(); } catch {} },
+    });
+    extensionsBySession.set(ses, ext);
+
+    // session.extensions 加载/卸载事件 → 同步 UI 状态
+    ses.on && ses.on('extension-loaded', (_e, extObj) => {
+      console.log(`✓ extension-loaded: ${extObj.name} (${extObj.id})`);
+      const dirName = path.basename(extObj.path || '');
+      if (dirName) extStatus.set(`${profileId}|${dirName}`, { state: 'loaded', id: extObj.id });
+    });
+    ses.on && ses.on('extension-unloaded', (_e, extObj) => {
+      console.log(`× extension-unloaded: ${extObj.name} (${extObj.id})`);
+    });
+  }
+
+  // 2) Chrome 商店原生支持 — chromewebstore.google.com 上的"添加至 Chrome"按钮直接可用
+  if (!webStoreInstalled.has(ses)) {
+    webStoreInstalled.add(ses);
+    try {
+      await installChromeWebStore({
+        session: ses,
+        extensionsPath: extDir,
+        autoUpdate: true,
+        loadExtensions: true,
+        allowUnpackedExtensions: true,
+        beforeInstall: async (details) => {
+          console.log(`商店安装请求: ${details.localizedName} (${details.id})`);
+          return { action: 'allow' };
+        },
       });
-  });
+      console.log(`✓ chrome web store 已挂到 session (profile=${profileId}, dir=${extDir})`);
+    } catch (err) {
+      console.error(`✗ installChromeWebStore 失败:`, err);
+    }
+  }
+}
+
+// 把窗口的 webview webContents 注册成扩展系统认识的 "tab"
+function registerWebviewAsTab(ses, webviewWebContents, browserWindow) {
+  const ext = extensionsBySession.get(ses);
+  if (!ext) return;
+  try {
+    ext.addTab(webviewWebContents, browserWindow);
+  } catch (e) {
+    console.error('addTab 失败:', e.message);
+  }
 }
 
 function sessionForProfile(profile, { incognito = false } = {}) {
@@ -151,7 +197,8 @@ function sessionForProfile(profile, { incognito = false } = {}) {
 
   if (!incognito && !extLoaded.has(profile.id)) {
     extLoaded.add(profile.id);
-    loadExtensionsForSession(profile.id, ses);
+    // 异步：扩展运行时 + Chrome 商店挂载（不阻塞窗口创建）
+    setupExtensionRuntime(profile.id, ses).catch(err => console.error('setupExtensionRuntime', err));
   }
   return ses;
 }
@@ -443,8 +490,16 @@ ipcMain.handle('extension:installLocal', async (e, profileIdOpt) => {
   const dst = path.join(DATA_DIR, 'extensions', profileId, path.basename(src));
   fs.mkdirSync(path.dirname(dst), { recursive: true });
   fs.cpSync(src, dst, { recursive: true });
-  extLoaded.delete(profileId);
-  return { profileId, dst };
+  // 立即加载到当前 session（不再需要重开窗口）
+  const ses = session.fromPartition(`persist:meowser-${profileId}`);
+  try {
+    const ext = await ses.loadExtension(dst, { allowFileAccess: true });
+    console.log(`✓ 本地扩展加载成功: ${path.basename(dst)} (${ext.id})`);
+    return { profileId, dst, ok: true, id: ext.id };
+  } catch (err) {
+    console.error(`✗ 本地扩展加载失败: ${err.message}`);
+    return { profileId, dst, ok: false, msg: err.message };
+  }
 });
 
 ipcMain.handle('ui:askText', async (e, { title, label, placeholder }) => {
@@ -511,21 +566,36 @@ ipcMain.handle('extension:list', (e, profileId) => {
       };
     });
 });
-ipcMain.handle('extension:reload', (e, profileId) => {
-  // 强制下次 sessionForProfile 时重新 load
-  extLoaded.delete(profileId);
-  // 立即对当前 session 触发一次（如果存在）
+ipcMain.handle('extension:reload', async (e, profileId) => {
   const ses = session.fromPartition(`persist:meowser-${profileId}`);
-  // 先把已加载的卸掉
-  ses.getAllExtensions().forEach(ext => {
-    try { ses.removeExtension(ext.id); } catch (err) { console.error('removeExtension', err.message); }
+  // 把已加载的全部卸掉，然后从扩展目录重新加载
+  const loaded = ses.extensions ? ses.extensions.getAllExtensions() : ses.getAllExtensions();
+  loaded.forEach(ext => {
+    try {
+      if (ses.extensions && ses.extensions.removeExtension) ses.extensions.removeExtension(ext.id);
+      else ses.removeExtension(ext.id);
+    } catch (err) { console.error('removeExtension', err.message); }
   });
-  // 清掉旧状态
   for (const k of Array.from(extStatus.keys())) {
     if (k.startsWith(profileId + '|')) extStatus.delete(k);
   }
-  loadExtensionsForSession(profileId, ses);
-  extLoaded.add(profileId);
+  // 重新扫扩展目录加载
+  const extDir = path.join(DATA_DIR, 'extensions', profileId);
+  if (fs.existsSync(extDir)) {
+    for (const name of fs.readdirSync(extDir)) {
+      const p = path.join(extDir, name);
+      try { if (!fs.statSync(p).isDirectory()) continue; } catch { continue; }
+      const meta = readManifest(p);
+      try {
+        const ext = await ses.loadExtension(p, { allowFileAccess: true });
+        extStatus.set(`${profileId}|${name}`, { state: 'loaded', id: ext.id, manifestVersion: meta.manifestVersion });
+        console.log(`✓ reload: ${name} (${ext.id})`);
+      } catch (err) {
+        extStatus.set(`${profileId}|${name}`, { state: 'failed', error: err.message, manifestVersion: meta.manifestVersion });
+        console.error(`✗ reload 失败: ${name} — ${err.message}`);
+      }
+    }
+  }
   return true;
 });
 ipcMain.handle('extension:remove', (e, profileId, dirName) => {
@@ -556,13 +626,47 @@ ipcMain.handle('extension:installFromStore', async (e, urlOrId, profileIdOpt) =>
   if (!profileId) return { ok: false, msg: '取消' };
   const targetDir = path.join(DATA_DIR, 'extensions', profileId);
   fs.mkdirSync(targetDir, { recursive: true });
+  // 提取 32 位扩展 ID
+  const m = String(urlOrId || '').match(/[a-p]{32}/);
+  if (!m) return { ok: false, msg: '提取不到扩展 ID' };
+  const extId = m[0];
+  const ses = session.fromPartition(`persist:meowser-${profileId}`);
   try {
-    const r = await crx.installFromStore(urlOrId, targetDir);
-    extLoaded.delete(profileId);
-    return { ok: true, profileId, ...r };
+    // 用 electron-chrome-web-store 装（自动加载 + 后续自动更新）
+    const ext = await installExtension(extId, {
+      session: ses,
+      extensionsPath: targetDir,
+      loadExtensionOptions: { allowFileAccess: true },
+    });
+    console.log(`✓ 商店扩展安装成功: ${ext.name} (${ext.id})`);
+    return { ok: true, profileId, id: ext.id, name: ext.name };
   } catch (err) {
-    return { ok: false, msg: err.message };
+    console.error(`✗ 商店扩展安装失败 (${extId}):`, err.message);
+    // 回退到老的手卷 crx 流程，至少能解压保留文件
+    try {
+      const r = await crx.installFromStore(urlOrId, targetDir);
+      console.log(`↪ 回退手卷安装成功（未自动加载）`);
+      return { ok: true, profileId, ...r, msg: 'electron-chrome-web-store 失败，已用 crx.js 回退' };
+    } catch (e2) {
+      return { ok: false, msg: `${err.message}（回退也失败: ${e2.message}）` };
+    }
   }
+});
+
+ipcMain.handle('extension:registerWebviewTab', (e) => {
+  // 渲染进程 webview did-attach 后调用，让扩展运行时把这个 webContents 当成"tab"
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || !win.profile) return false;
+  const ses = session.fromPartition(win.__incognito
+    ? `meowser-incognito-${win.profile.id}`
+    : `persist:meowser-${win.profile.id}`);
+  // sender 是 host webContents（chrome.html 的渲染进程）；我们要的是 webview 的 webContents
+  // webview 子 webContents 的 hostWebContents 等于 sender
+  const allWcs = require('electron').webContents.getAllWebContents();
+  const webviewWc = allWcs.find(wc => wc.hostWebContents && wc.hostWebContents.id === e.sender.id);
+  if (!webviewWc) return false;
+  registerWebviewAsTab(ses, webviewWc, win);
+  return true;
 });
 
 // ─── 配置导出/导入 ───
