@@ -1,6 +1,6 @@
 {
   "name": "meowser",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Meowser — 浮动浏览器（Chromium 重写版）",
   "main": "src/main.js",
   "scripts": {
@@ -13,7 +13,7 @@
     "pack": "electron-builder --dir"
   },
   "author": "Meowser",
-  "license": "MIT",
+  "license": "GPL-3.0",
   "type": "commonjs",
   "devDependencies": {
     "electron": "^41.5.0",

@@ -118,8 +118,8 @@ async function setupExtensionRuntime(profileId, ses) {
   // 1) chrome.* API 注入（chrome.tabs / chrome.action / popup / contextMenus 等）
   if (!extensionsBySession.has(ses)) {
     const ext = new ElectronChromeExtensions({
+      license: 'GPL-3.0',
       session: ses,
-      modulePath: path.join(__dirname, '..', 'node_modules', 'electron-chrome-extensions'),
       createTab: async (details) => {
         // 扩展请求开新 tab → 我们没 tab，转开新窗口
         const profile = loadProfiles().find(p => p.id === profileId);
