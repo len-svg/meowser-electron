@@ -78,5 +78,16 @@ contextBridge.exposeInMainWorld('api', {
   // app 版本
   appVersion: () => ipcRenderer.invoke('app:version'),
 
+  // 窗口管理 (v0.5.0)
+  windowsList:               () => ipcRenderer.invoke('windows:list'),
+  windowsFocus:              (id) => ipcRenderer.invoke('windows:focus', id),
+  windowsClose:              (id, force) => ipcRenderer.invoke('windows:close', id, force),
+  windowsCloseBatch:         (ids, force) => ipcRenderer.invoke('windows:closeBatch', { window_ids: ids, force }),
+  windowsCloseByProfile:     (pid, keep_focused, force) => ipcRenderer.invoke('windows:closeByProfile', { profile_id: pid, keep_focused, force }),
+  windowsCloseAllIncognito:  () => ipcRenderer.invoke('windows:closeAllIncognito'),
+  windowsKeepFocusedCloseOthers: () => ipcRenderer.invoke('windows:keepFocusedCloseOthers'),
+  onWindowsChanged:          (cb) => ipcRenderer.on('windows:changed', cb),
+  openWindowManager:         () => ipcRenderer.invoke('windowManager:open'),
+
   electronVersion: process.versions.electron,
 });

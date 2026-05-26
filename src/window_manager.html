@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>窗口管理 · Meowser</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #1d1d1f; color: #ededed;
+    -webkit-user-select: none;
+    display: flex; flex-direction: column;
+  }
+
+  .header {
+    height: 56px; padding: 0 20px;
+    display: flex; align-items: center; gap: 12px;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    -webkit-app-region: drag;
+    flex-shrink: 0;
+  }
+  .title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .title .emoji { font-size: 18px; }
+  .stats {
+    margin-left: 8px; font-size: 11px;
+    font-family: ui-monospace, SF Mono, monospace;
+    color: rgba(255,255,255,0.5);
+    padding: 3px 8px; border-radius: 4px;
+    background: rgba(255,255,255,0.05);
+  }
+  .header-actions { margin-left: auto; display: flex; gap: 6px; -webkit-app-region: no-drag; }
+  .iconbtn {
+    width: 30px; height: 30px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: transparent; border: none; border-radius: 50%;
+    cursor: pointer; color: #ededed;
+  }
+  .iconbtn:hover { background: rgba(255,255,255,0.08); }
+  .iconbtn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .filters {
+    padding: 12px 20px; display: flex; gap: 6px;
+    flex-wrap: wrap; align-items: center;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    flex-shrink: 0;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    height: 28px; padding: 0 12px;
+    background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8);
+    border-radius: 14px; font-size: 12px; font-weight: 500;
+    cursor: pointer; border: 1px solid transparent;
+    transition: all 0.12s;
+  }
+  .chip:hover { background: rgba(255,255,255,0.10); }
+  .chip.active { background: #1a73e8; color: white; }
+  .chip .num {
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 10px; opacity: 0.7;
+    padding: 1px 5px; background: rgba(255,255,255,0.10);
+    border-radius: 8px;
+  }
+  .chip.active .num { background: rgba(255,255,255,0.20); opacity: 0.95; }
+
+  .search {
+    margin-left: auto; height: 28px; width: 220px;
+    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 0 12px;
+    font-size: 12px; color: #ededed; outline: none;
+  }
+  .search:focus { border-color: #1a73e8; background: rgba(255,255,255,0.08); }
+  .search::placeholder { color: rgba(255,255,255,0.35); }
+
+  .bulkbar {
+    height: 0; overflow: hidden;
+    background: #1a73e8; color: white;
+    display: flex; align-items: center; padding: 0 20px; gap: 12px;
+    transition: height 0.15s;
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .bulkbar.show { height: 40px; }
+  .bulkbar .btn {
+    height: 26px; padding: 0 12px;
+    background: rgba(255,255,255,0.18); color: white;
+    border: none; border-radius: 13px;
+    font-size: 12px; cursor: pointer; font-weight: 600;
+  }
+  .bulkbar .btn:hover { background: rgba(255,255,255,0.28); }
+  .bulkbar .btn.danger { background: rgba(255,255,255,0.22); }
+  .bulkbar .btn.danger:hover { background: rgba(255,255,255,0.32); }
+  .bulkbar .spacer { flex: 1; }
+  .bulkbar .cnt { font-weight: 600; }
+  .bulkbar .clear { color: rgba(255,255,255,0.8); text-decoration: underline; cursor: pointer; font-size: 11px; }
+
+  .list { flex: 1; overflow-y: auto; padding: 4px 0; }
+  .row {
+    display: flex; align-items: center;
+    padding: 12px 20px; gap: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+    cursor: pointer;
+    transition: background 0.08s;
+  }
+  .row:hover { background: rgba(255,255,255,0.03); }
+  .row.selected { background: rgba(26,115,232,0.15); }
+  .row.selected:hover { background: rgba(26,115,232,0.20); }
+
+  .row input[type=checkbox] {
+    width: 16px; height: 16px; flex-shrink: 0;
+    accent-color: #1a73e8;
+    cursor: pointer;
+  }
+
+  .swatch {
+    width: 4px; height: 36px; border-radius: 2px;
+    flex-shrink: 0;
+  }
+  .swatch.yellow { background: #FFCC00; }
+  .swatch.green  { background: #34C759; }
+  .swatch.red    { background: #FF3B30; }
+  .swatch.incog  { background: #6c2bd9; }
+
+  .emoji-cell {
+    width: 32px; height: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: rgba(255,255,255,0.06); border-radius: 8px;
+    font-size: 18px; flex-shrink: 0;
+  }
+
+  .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .meta .top { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .meta .top .name { color: #ededed; }
+  .meta .top .badge {
+    font-size: 10px; padding: 1px 6px;
+    border-radius: 8px; font-weight: 600;
+    text-transform: uppercase;
+    font-family: ui-monospace, SF Mono, monospace;
+    letter-spacing: 0.3px;
+  }
+  .badge.incog    { background: rgba(108,43,217,0.20); color: #b794f4; }
+  .badge.small    { background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.6); }
+  .badge.focused  { background: rgba(52,199,89,0.20);  color: #4ade80; }
+  .badge.pinned   { background: rgba(255,204,0,0.20);  color: #fbbf24; }
+
+  .meta .title-line { font-size: 12px; color: rgba(255,255,255,0.7); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta .url-line { font-size: 11px; color: rgba(255,255,255,0.35); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SF Mono, monospace; }
+
+  .col-mem, .col-time {
+    flex-shrink: 0; text-align: right;
+    font-family: ui-monospace, SF Mono, monospace;
+    font-size: 12px;
+  }
+  .col-mem { width: 80px; }
+  .col-mem .v { color: #ededed; font-weight: 600; }
+  .col-mem .v.warn   { color: #fbbf24; }
+  .col-mem .v.danger { color: #ff6b6b; }
+  .col-mem .sub { font-size: 10px; color: rgba(255,255,255,0.4); margin-top: 2px; }
+
+  .col-time { width: 70px; }
+  .col-time .v { color: rgba(255,255,255,0.7); }
+  .col-time .sub { font-size: 10px; color: rgba(255,255,255,0.35); margin-top: 2px; }
+
+  .actions { display: flex; gap: 4px; flex-shrink: 0; opacity: 0; transition: opacity 0.1s; }
+  .row:hover .actions { opacity: 1; }
+  .actions .btn {
+    width: 30px; height: 30px;
+    background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8);
+    border: none; border-radius: 8px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .actions .btn:hover { background: rgba(255,255,255,0.14); }
+  .actions .btn.danger:hover { background: rgba(255,59,48,0.25); color: #ff6b6b; }
+  .actions .btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  .footer {
+    padding: 12px 20px;
+    background: rgba(255,255,255,0.03);
+    border-top: 1px solid rgba(255,255,255,0.06);
+    display: flex; gap: 8px; flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+  .footer .btn {
+    height: 32px; padding: 0 16px;
+    background: rgba(255,255,255,0.06); color: #ededed;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .footer .btn:hover { background: rgba(255,255,255,0.10); }
+  .footer .btn.danger {
+    background: rgba(255,59,48,0.12); color: #ff6b6b;
+    border-color: rgba(255,59,48,0.25);
+  }
+  .footer .btn.danger:hover { background: rgba(255,59,48,0.20); }
+  .footer .spacer { flex: 1; }
+  .footer .hint {
+    font-size: 11px; color: rgba(255,255,255,0.4);
+    display: flex; align-items: center; gap: 4px;
+    font-family: ui-monospace, SF Mono, monospace;
+  }
+  .footer .hint kbd { padding: 1px 5px; background: rgba(255,255,255,0.06); border-radius: 3px; border: 1px solid rgba(255,255,255,0.08); }
+
+  .empty {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    color: rgba(255,255,255,0.4);
+    gap: 8px; padding: 40px;
+  }
+  .empty .ico { font-size: 32px; }
+  .empty .msg { font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">
+      <span class="emoji">🗂</span>
+      <span>窗口管理</span>
+      <span class="stats" id="stats">—</span>
+    </div>
+    <div class="header-actions">
+      <button class="iconbtn" title="刷新" id="btn-refresh">
+        <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="filters" id="filters"></div>
+
+  <div class="bulkbar" id="bulkbar">
+    <span class="cnt">已选 <span id="sel-cnt">0</span> 个</span>
+    <button class="btn danger" id="btn-bulk-close">关闭选中</button>
+    <span class="clear" id="clear-sel">清除选择</span>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="list" id="list"></div>
+
+  <div class="footer">
+    <button class="btn" id="btn-keep-focused"><span>✓</span> 留聚焦 关其他</button>
+    <button class="btn" id="btn-close-profile">关此工作区</button>
+    <button class="btn" id="btn-close-incog">关所有无痕</button>
+    <div class="spacer"></div>
+    <button class="btn danger" id="btn-close-all">关全部</button>
+    <span class="hint"><kbd>⌃⌘W</kbd> 唤起 · <kbd>esc</kbd> 关闭</span>
+  </div>
+
+<script>
+const state = {
+  windows: [],
+  filter: 'all',
+  search: '',
+  selected: new Set(),
+};
+
+function fmtAgo(iso) {
+  if (!iso) return '—';
+  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  if (sec < 86400) return Math.floor(sec / 3600) + 'h';
+  return Math.floor(sec / 86400) + 'd';
+}
+function fmtMem(kb) {
+  if (!kb) return { v: '—', unit: '', warn: false, danger: false };
+  const mb = kb / 1024;
+  if (mb < 1024) return { v: Math.round(mb), unit: 'MB', warn: mb >= 500, danger: mb >= 800 };
+  return { v: (mb / 1024).toFixed(2), unit: 'GB', warn: false, danger: true };
+}
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+async function refresh() {
+  state.windows = await window.api.windowsList();
+  // 清掉已不存在的 selected
+  const idSet = new Set(state.windows.map(w => w.window_id));
+  for (const id of [...state.selected]) if (!idSet.has(id)) state.selected.delete(id);
+  render();
+}
+
+function buildFilters() {
+  const counts = new Map();
+  counts.set('all', state.windows.length);
+  counts.set('incog', state.windows.filter(w => w.is_incognito).length);
+  state.windows.forEach(w => {
+    counts.set(w.profile_id, (counts.get(w.profile_id) || 0) + 1);
+  });
+  const profiles = [];
+  const seen = new Set();
+  state.windows.forEach(w => {
+    if (seen.has(w.profile_id)) return;
+    seen.add(w.profile_id);
+    profiles.push({ id: w.profile_id, emoji: w.profile_emoji, name: w.profile_name });
+  });
+
+  const wrap = document.getElementById('filters');
+  wrap.innerHTML = '';
+  const mkChip = (key, label, num) => {
+    const el = document.createElement('div');
+    el.className = 'chip' + (state.filter === key ? ' active' : '');
+    el.innerHTML = `${label} <span class="num">${num}</span>`;
+    el.onclick = () => { state.filter = key; render(); };
+    return el;
+  };
+  wrap.appendChild(mkChip('all', '全部', counts.get('all') || 0));
+  profiles.forEach(p => wrap.appendChild(mkChip(p.id, `${p.emoji} ${escapeHtml(p.name)}`, counts.get(p.id) || 0)));
+  if (counts.get('incog') > 0) wrap.appendChild(mkChip('incog', '🕶 无痕', counts.get('incog')));
+
+  const search = document.createElement('input');
+  search.className = 'search';
+  search.placeholder = '搜索 title 或 URL…';
+  search.value = state.search;
+  search.oninput = e => { state.search = e.target.value; renderList(); };
+  wrap.appendChild(search);
+}
+
+function render() {
+  buildFilters();
+  renderList();
+
+  // stats
+  const totalKb = state.windows.reduce((s, w) => s + (w.memory_kb || 0), 0);
+  const totalStr = totalKb > 0
+    ? (totalKb < 1024 * 1024 ? Math.round(totalKb / 1024) + ' MB' : (totalKb / 1024 / 1024).toFixed(2) + ' GB')
+    : '—';
+  document.getElementById('stats').textContent = `共 ${state.windows.length} 个窗口 · ~${totalStr}`;
+
+  // bulk bar
+  const bulkbar = document.getElementById('bulkbar');
+  bulkbar.classList.toggle('show', state.selected.size > 0);
+  document.getElementById('sel-cnt').textContent = state.selected.size;
+}
+
+function filtered() {
+  return state.windows.filter(w => {
+    if (state.filter !== 'all') {
+      if (state.filter === 'incog') { if (!w.is_incognito) return false; }
+      else if (w.profile_id !== state.filter) return false;
+    }
+    if (state.search) {
+      const q = state.search.toLowerCase();
+      if (!(w.title || '').toLowerCase().includes(q) && !(w.url || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderList() {
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+  const rows = filtered();
+  if (rows.length === 0) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.innerHTML = '<div class="ico">🪟</div><div class="msg">' + (state.windows.length === 0 ? '当前没有打开的工作区窗口' : '没有匹配窗口') + '</div>';
+    list.appendChild(e);
+    return;
+  }
+  rows.forEach(w => list.appendChild(makeRow(w)));
+}
+
+function makeRow(w) {
+  const row = document.createElement('div');
+  row.className = 'row' + (state.selected.has(w.window_id) ? ' selected' : '');
+  const swatchClass = w.is_incognito ? 'incog' : w.profile_theme;
+  const mem = fmtMem(w.memory_kb);
+  const memClass = mem.danger ? 'danger' : (mem.warn ? 'warn' : '');
+
+  row.innerHTML = `
+    <input type="checkbox" ${state.selected.has(w.window_id) ? 'checked' : ''}>
+    <div class="swatch ${swatchClass}"></div>
+    <div class="emoji-cell">${escapeHtml(w.profile_emoji || '🐱')}</div>
+    <div class="meta">
+      <div class="top">
+        <span class="name">${escapeHtml(w.profile_name || '')}</span>
+        ${w.is_focused ? '<span class="badge focused">● 聚焦中</span>' : ''}
+        ${w.is_incognito ? '<span class="badge incog">无痕</span>' : ''}
+        ${w.is_small ? '<span class="badge small">小窗</span>' : ''}
+        ${w.always_on_top ? '<span class="badge pinned">置顶</span>' : ''}
+      </div>
+      <div class="title-line">${escapeHtml(w.title || '(无标题)')}</div>
+      <div class="url-line">${escapeHtml(w.url || '')}</div>
+    </div>
+    <div class="col-mem">
+      <div class="v ${memClass}">${mem.v}${mem.unit ? ' ' + mem.unit : ''}</div>
+      <div class="sub">${w.webview_count || 1} webview</div>
+    </div>
+    <div class="col-time">
+      <div class="v">已开 ${fmtAgo(w.opened_at)}</div>
+      <div class="sub">${w.last_focused_at ? '聚焦 ' + fmtAgo(w.last_focused_at) + '前' : '从未聚焦'}</div>
+    </div>
+    <div class="actions">
+      <button class="btn" title="聚焦此窗" data-act="focus">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="btn danger" title="关闭此窗" data-act="close">
+        <svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+  `;
+
+  row.querySelector('input').addEventListener('click', e => {
+    e.stopPropagation();
+    if (e.target.checked) state.selected.add(w.window_id);
+    else state.selected.delete(w.window_id);
+    row.classList.toggle('selected', e.target.checked);
+    const bulkbar = document.getElementById('bulkbar');
+    bulkbar.classList.toggle('show', state.selected.size > 0);
+    document.getElementById('sel-cnt').textContent = state.selected.size;
+  });
+
+  row.addEventListener('click', async e => {
+    const actBtn = e.target.closest('[data-act]');
+    if (e.target.tagName === 'INPUT') return;
+    if (actBtn) {
+      const act = actBtn.dataset.act;
+      if (act === 'focus') await window.api.windowsFocus(w.window_id);
+      if (act === 'close') await window.api.windowsClose(w.window_id);
+      return;
+    }
+    // 整行点 = 聚焦
+    await window.api.windowsFocus(w.window_id);
+  });
+
+  return row;
+}
+
+document.getElementById('btn-refresh').onclick = refresh;
+document.getElementById('clear-sel').onclick = () => { state.selected.clear(); render(); };
+document.getElementById('btn-bulk-close').onclick = async () => {
+  await window.api.windowsCloseBatch([...state.selected], false);
+};
+document.getElementById('btn-keep-focused').onclick = () => window.api.windowsKeepFocusedCloseOthers();
+document.getElementById('btn-close-profile').onclick = () => {
+  // 取当前过滤的 profile；如果是 all/incog 则不动作
+  if (state.filter === 'all' || state.filter === 'incog') {
+    alert('请先选具体工作区过滤');
+    return;
+  }
+  window.api.windowsCloseByProfile(state.filter, false, false);
+};
+document.getElementById('btn-close-incog').onclick = () => window.api.windowsCloseAllIncognito();
+document.getElementById('btn-close-all').onclick = async () => {
+  if (!confirm(`确认关闭全部 ${state.windows.length} 个窗口？`)) return;
+  await window.api.windowsCloseBatch(state.windows.map(w => w.window_id), false);
+};
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') window.close();
+});
+
+window.api.onWindowsChanged(() => refresh());
+refresh();
+</script>
+</body>
+</html>

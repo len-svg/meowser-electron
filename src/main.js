@@ -178,11 +178,62 @@ function registerWebviewAsTab(ses, webviewWebContents, browserWindow) {
   }
 }
 
+// 把 Electron / Meowser 字样从 UA 抹掉，伪装成 Chromium 同版本的桌面 Chrome
+// 必须早于第一次发起请求；放在 sessionForProfile 入口处调用足够
+function applyChromeUA(ses) {
+  const chromiumVer = (process.versions.chrome || '130.0.0.0');
+  const platformUA = process.platform === 'darwin'
+    ? 'Macintosh; Intel Mac OS X 10_15_7'
+    : process.platform === 'win32'
+      ? 'Windows NT 10.0; Win64; x64'
+      : 'X11; Linux x86_64';
+  const ua = `Mozilla/5.0 (${platformUA}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromiumVer} Safari/537.36`;
+  ses.setUserAgent(ua);
+  return ua;
+}
+
 function sessionForProfile(profile, { incognito = false } = {}) {
   const partition = incognito
     ? `meowser-incognito-${profile.id}-${Date.now()}`         // 无 persist: 前缀 → 内存
     : `persist:meowser-${profile.id}`;
   const ses = session.fromPartition(partition);
+
+  // ─── User Agent 伪装成原生 Chrome ───
+  // Google 登录、银行、WebAuthn 等敏感流程会嗅探 UA，看到 "Electron/Meowser" 直接拒绝
+  // FIDO2 安全密钥 (YubiKey) 在 Electron 版本里 Google 报"出现问题"就是 UA 检测拦截
+  // 同 partition 反复 setUserAgent 是幂等的
+  applyChromeUA(ses);
+
+  // ─── 权限请求：默认放行（独立浏览器对自己的权限请求语义就是接受）───
+  // 不装 handler 的话很多 permission 默认拒绝，影响 webauthn / clipboard / notification 等
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(true);
+  });
+
+  // ─── 设备访问授权：HID (FIDO2 安全密钥走这条) / USB / Serial ───
+  // YubiKey 通过 USB-HID 用 CTAP2 协议跟浏览器通信，必须显式同意
+  ses.setDevicePermissionHandler(() => true);
+
+  // ─── HID 设备选择回调：WebAuthn 触发选择安全密钥时 ───
+  // 默认无 listener → Chromium 等用户选 → 永远不会被选 → fallback "出现问题"
+  // 单 token 场景直接选第一个；多 token 也选第一个（不展示选择 UI 满足 demand pattern）
+  ses.on('select-hid-device', (event, details, callback) => {
+    event.preventDefault();
+    if (details.deviceList && details.deviceList.length > 0) {
+      callback(details.deviceList[0].deviceId);
+    } else {
+      callback(null);
+    }
+  });
+  // 同上对 USB 设备（少数 FIDO key 走 WebUSB 而非 WebHID）
+  ses.on('select-usb-device', (event, details, callback) => {
+    event.preventDefault();
+    if (details.deviceList && details.deviceList.length > 0) {
+      callback(details.deviceList[0].deviceId);
+    } else {
+      callback(null);
+    }
+  });
 
   const px = profile.proxy || { type: 'direct' };
   if (px.type === 'http' || px.type === 'https') {
@@ -322,7 +373,137 @@ function createBrowserWindow(profile, opts = {}) {
       win.webContents.send('window:resized', { w: SMALL_W, h: SMALL_H, small: true });
     }
   });
+
+  registerBrowserWindow(win, { profile, incognito, isSmall });
   return win;
+}
+
+// ─── 窗口注册表 (v0.5.0 批量窗口管理用) ───
+// key = BrowserWindow.id, value = WindowMeta
+const windowRegistry = new Map();
+
+function nowUTC() { return new Date().toISOString(); }
+
+function registerBrowserWindow(win, { profile, incognito, isSmall }) {
+  const meta = {
+    window_id: win.id,
+    profile_id: profile.id,
+    profile_emoji: profile.emoji,
+    profile_name: profile.name,
+    profile_theme: profile.theme || 'yellow',
+    is_incognito: !!incognito,
+    is_small: !!isSmall,
+    always_on_top: win.isAlwaysOnTop(),
+    title: win.getTitle(),
+    url: '',
+    opened_at: nowUTC(),
+    last_focused_at: null,
+    memory_kb: 0,
+    webview_count: 0,
+  };
+  windowRegistry.set(win.id, meta);
+
+  // 标题/URL 跟随 chrome.html webview，需要在主进程 fish 出 webview 的 webContents
+  // —— chrome.html 的 host webContents 自己也会发 page-title-updated（来自 .profile-strip），
+  //    用 webContents.getAllWebContents 找 hostWebContents === win.webContents 的子项
+  function syncFromWebview() {
+    if (win.isDestroyed()) return;
+    require('electron').webContents.getAllWebContents().forEach(wc => {
+      if (wc.hostWebContents && wc.hostWebContents.id === win.webContents.id) {
+        try {
+          meta.url = wc.getURL() || '';
+          meta.title = wc.getTitle() || meta.title;
+        } catch {}
+      }
+    });
+    broadcastWindowsChanged();
+  }
+
+  win.on('focus', () => {
+    meta.last_focused_at = nowUTC();
+    broadcastWindowsChanged();
+  });
+  win.on('always-on-top-changed', () => {
+    meta.always_on_top = win.isAlwaysOnTop();
+    broadcastWindowsChanged();
+  });
+  win.on('resize', () => {
+    const [cw] = win.getSize();
+    meta.is_small = cw <= SMALL_W + 20;
+  });
+  win.on('page-title-updated', (_e, title) => {
+    meta.title = title || meta.title;
+    broadcastWindowsChanged();
+  });
+  win.on('closed', () => {
+    windowRegistry.delete(win.id);
+    broadcastWindowsChanged();
+  });
+  // webview attach 时挂事件
+  win.webContents.on('did-attach-webview', (_e, wc) => {
+    wc.on('did-navigate',        (_, url) => { meta.url = url; broadcastWindowsChanged(); });
+    wc.on('did-navigate-in-page',(_, url) => { meta.url = url; broadcastWindowsChanged(); });
+    wc.on('page-title-updated',  (_, t)   => { meta.title = t || meta.title; broadcastWindowsChanged(); });
+  });
+  // 首次同步（webview 可能还没 ready，5s 后再来一次保险）
+  setTimeout(syncFromWebview, 1500);
+  setTimeout(syncFromWebview, 5000);
+}
+
+// 50ms debounce 防抖广播
+let _broadcastTimer = null;
+function broadcastWindowsChanged() {
+  if (_broadcastTimer) return;
+  _broadcastTimer = setTimeout(() => {
+    _broadcastTimer = null;
+    BrowserWindow.getAllWindows().forEach(w => {
+      if (!w.isDestroyed()) w.webContents.send('windows:changed');
+    });
+  }, 50);
+}
+
+// 取一份当前所有工作区窗口的快照（不含 launcher/editor/bm-mgr/window-mgr 自身）
+function snapshotWindows() {
+  const list = [];
+  for (const meta of windowRegistry.values()) {
+    const w = BrowserWindow.fromId(meta.window_id);
+    if (!w || w.isDestroyed()) {
+      windowRegistry.delete(meta.window_id);
+      continue;
+    }
+    // 实时刷一遍 is_small / always_on_top（避免事件没追上）
+    try {
+      const [cw] = w.getSize();
+      meta.is_small = cw <= SMALL_W + 20;
+      meta.always_on_top = w.isAlwaysOnTop();
+    } catch {}
+    list.push({ ...meta, is_focused: w.isFocused() });
+  }
+  return list;
+}
+
+// 探测一个窗口的 webview 里是否有疑似未保存的输入
+async function probeUnsavedInput(win) {
+  return new Promise(resolve => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    setTimeout(() => finish(false), 800);  // 超时按"无未保存"处理，避免卡住
+
+    require('electron').webContents.getAllWebContents().forEach(wc => {
+      if (wc.hostWebContents && wc.hostWebContents.id === win.webContents.id) {
+        wc.executeJavaScript(`
+          (() => {
+            const list = document.querySelectorAll('input, textarea, [contenteditable]');
+            for (const el of list) {
+              const v = ((el.value || el.textContent || '') + '').trim();
+              if (v.length > 5) return true;
+            }
+            return false;
+          })()
+        `).then(r => finish(!!r)).catch(() => finish(false));
+      }
+    });
+  });
 }
 
 // ─── Tray ───
@@ -348,6 +529,7 @@ function buildTrayMenu() {
     }},
     { type: 'separator' },
     { label: '启动器…', accelerator: 'Cmd+Alt+L', click: () => createLauncher() },
+    { label: '🗂 窗口管理…', accelerator: 'Ctrl+Cmd+W', click: () => openWindowManager() },
     { label: '显示/隐藏所有窗口', accelerator: 'Alt+`', click: toggleAllWindows },
     { type: 'separator' },
     { label: '退出 Meowser', role: 'quit' },
@@ -742,6 +924,126 @@ ipcMain.handle('layout:arrange', (e, edge, style) => arrangeWindows(edge, style)
 ipcMain.handle('home:url', (e, profile) => homeUrlFor(profile));
 ipcMain.handle('app:version', () => app.getVersion());
 
+// ─── 窗口管理 (v0.5.0) ───
+ipcMain.handle('windows:list', () => snapshotWindows());
+
+ipcMain.handle('windows:focus', (e, windowId) => {
+  const w = BrowserWindow.fromId(windowId);
+  if (!w || w.isDestroyed()) return { ok: false, reason: 'not_found' };
+  if (w.isMinimized()) w.restore();
+  w.show();
+  w.focus();
+  return { ok: true };
+});
+
+async function confirmAndClose(w, force) {
+  if (!w || w.isDestroyed()) return { ok: false, reason: 'not_found' };
+  if (!force) {
+    const hasUnsaved = await probeUnsavedInput(w);
+    if (hasUnsaved) {
+      const meta = windowRegistry.get(w.id);
+      const r = await dialog.showMessageBox(w, {
+        type: 'warning',
+        title: '关闭窗口',
+        message: meta ? `「${meta.profile_emoji} ${meta.profile_name}」窗口里有疑似未保存的输入` : '此窗口有疑似未保存的输入',
+        detail: '关闭后输入内容将丢失。',
+        buttons: ['取消', '确认关闭'],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (r.response !== 1) return { ok: false, cancelled: true };
+    }
+  }
+  w.close();
+  return { ok: true };
+}
+
+ipcMain.handle('windows:close', (e, windowId, force) => {
+  const w = BrowserWindow.fromId(windowId);
+  return confirmAndClose(w, !!force);
+});
+
+ipcMain.handle('windows:closeBatch', async (e, payload) => {
+  const { window_ids = [], force = false } = payload || {};
+  let closed = 0, cancelled = 0;
+  for (const id of window_ids) {
+    const w = BrowserWindow.fromId(id);
+    if (!w || w.isDestroyed()) continue;
+    const r = await confirmAndClose(w, force);
+    if (r && r.ok) closed++;
+    else if (r && r.cancelled) cancelled++;
+  }
+  return { closed, cancelled };
+});
+
+ipcMain.handle('windows:closeByProfile', async (e, payload) => {
+  const { profile_id, keep_focused = false, force = false } = payload || {};
+  if (!profile_id) return { closed: 0 };
+  const focusedId = BrowserWindow.getFocusedWindow() ? BrowserWindow.getFocusedWindow().id : null;
+  let closed = 0;
+  for (const meta of [...windowRegistry.values()]) {
+    if (meta.profile_id !== profile_id) continue;
+    if (keep_focused && meta.window_id === focusedId) continue;
+    const w = BrowserWindow.fromId(meta.window_id);
+    const r = await confirmAndClose(w, force);
+    if (r && r.ok) closed++;
+  }
+  return { closed };
+});
+
+ipcMain.handle('windows:closeAllIncognito', async () => {
+  let closed = 0;
+  for (const meta of [...windowRegistry.values()]) {
+    if (!meta.is_incognito) continue;
+    const w = BrowserWindow.fromId(meta.window_id);
+    const r = await confirmAndClose(w, true);  // 无痕窗一律 force 关，无意义提示
+    if (r && r.ok) closed++;
+  }
+  return { closed };
+});
+
+ipcMain.handle('windows:keepFocusedCloseOthers', async () => {
+  const focused = BrowserWindow.getFocusedWindow();
+  const focusedId = focused ? focused.id : null;
+  let closed = 0;
+  for (const meta of [...windowRegistry.values()]) {
+    if (meta.window_id === focusedId) continue;
+    const w = BrowserWindow.fromId(meta.window_id);
+    const r = await confirmAndClose(w, false);
+    if (r && r.ok) closed++;
+  }
+  return { closed };
+});
+
+// ─── 窗口管理面板窗本身 ───
+let windowManagerWindow = null;
+function openWindowManager() {
+  if (windowManagerWindow && !windowManagerWindow.isDestroyed()) {
+    windowManagerWindow.show();
+    windowManagerWindow.focus();
+    return;
+  }
+  windowManagerWindow = new BrowserWindow({
+    width: 980, height: 640, show: false,
+    backgroundColor: '#1d1d1f',
+    titleBarStyle: 'hiddenInset',
+    title: '窗口管理',
+    vibrancy: 'under-window', visualEffectState: 'active',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  });
+  windowManagerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  windowManagerWindow.loadFile(path.join(__dirname, 'window_manager.html'));
+  windowManagerWindow.once('ready-to-show', () => {
+    windowManagerWindow.show();
+    windowManagerWindow.focus();
+  });
+  windowManagerWindow.on('closed', () => { windowManagerWindow = null; });
+}
+ipcMain.handle('windowManager:open', () => openWindowManager());
+
 // ─── 内存监控（每 5 秒推一次给所有浏览器窗）───
 async function pushMemoryToWindows() {
   let metrics;
@@ -836,6 +1138,8 @@ app.whenReady().then(() => {
   createTray();
   globalShortcut.register('Alt+`', toggleAllWindows);
   globalShortcut.register('CommandOrControl+Alt+L', () => createLauncher());
+  // ⌃⌘W 唤起窗口管理器（与 macOS 系统的 ⌘W 关闭窗口冲突，故用 Ctrl+Cmd 组合）
+  globalShortcut.register('Control+Cmd+W', () => openWindowManager());
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
