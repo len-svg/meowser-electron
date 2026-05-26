@@ -307,7 +307,7 @@ function navigate(text) {
 }
 urlInput.addEventListener('keydown', e => {
   if (e.key === 'Enter') navigate(urlInput.value);
-  if (e.key === 'Escape') { urlInput.value = wv.getURL ? wv.getURL() : ''; urlInput.blur(); }
+  if (e.key === 'Escape') { urlInput.value = safeGetURL(); urlInput.blur(); }
 });
 
 // proxy chip
@@ -340,6 +340,15 @@ document.getElementById('btn-reload').onclick = () => wv.reload();
 // ─── star（收藏）───
 const star = document.getElementById('star');
 let bookmarkedSet = new Set();
+// 安全包装：webview 未 dom-ready 时 getURL 会抛 "The WebView must be attached
+// to the DOM and the dom-ready event emitted" —— 全局静默返回空串
+function safeGetURL() {
+  try { return safeGetURL(); } catch { return ''; }
+}
+function safeGetTitle() {
+  try { return wv.getTitle ? wv.getTitle() : ''; } catch { return ''; }
+}
+
 async function refreshBookmarkedSet() {
   if (isIncognito) { bookmarkedSet = new Set(); return; }
   const list = await window.api.listBookmarks(profile.id);
@@ -347,8 +356,7 @@ async function refreshBookmarkedSet() {
   updateStar();
 }
 function updateStar() {
-  const u = wv.getURL ? wv.getURL() : '';
-  star.classList.toggle('on', bookmarkedSet.has(u));
+  star.classList.toggle('on', bookmarkedSet.has(safeGetURL()));
 }
 star.onclick = async () => {
   if (isIncognito) { toast('无痕模式不保存书签'); return; }
@@ -356,7 +364,7 @@ star.onclick = async () => {
   if (bookmarkedSet.has(u)) {
     await window.api.removeBookmark(profile.id, u);
   } else {
-    const title = wv.getTitle ? wv.getTitle() : u;
+    const title = safeGetTitle() || u;
     await window.api.addBookmark(profile.id, { url: u, title });
   }
 };
@@ -581,7 +589,7 @@ document.addEventListener('keydown', e => {
 
 // ─── URL 同步 ───
 function syncUrl() {
-  if (document.activeElement !== urlInput) urlInput.value = wv.getURL ? wv.getURL() : '';
+  if (document.activeElement !== urlInput) urlInput.value = safeGetURL();
   updateStar();
 }
 wv.addEventListener('did-navigate',         () => { syncUrl(); maybeInjectStoreButton(); });
@@ -617,7 +625,7 @@ wv.addEventListener('dom-ready', () => {
 
 // 进入 chromewebstore.google.com 详情页时注入"在 Meowser 安装"按钮
 function maybeInjectStoreButton() {
-  const u = wv.getURL ? wv.getURL() : '';
+  const u = safeGetURL();
   if (!/^https:\/\/chromewebstore\.google\.com\//.test(u)) return;
   const idMatch = u.match(/\/detail\/[^\/]+\/([a-p]{32})/) || u.match(/([a-p]{32})/);
   const id = idMatch ? idMatch[1] : '';
