@@ -1,11 +1,13 @@
 const { _electron: electron } = require('@playwright/test');
 const path = require('path');
+const { createSandbox } = require('./helpers/sandbox');
+const _SB = createSandbox();
 const fs = require('fs');
 const OUT = path.join(__dirname, '_out');
 fs.mkdirSync(OUT, { recursive: true });
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], cwd: path.join(__dirname, '..') });
+  const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   const launcher = await app.firstWindow();
   await launcher.waitForLoadState('domcontentloaded');
 

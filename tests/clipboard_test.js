@@ -2,9 +2,11 @@
 // 用法: node tests/clipboard_test.js
 const { _electron: electron } = require('@playwright/test');
 const path = require('path');
+const { createSandbox } = require('./helpers/sandbox');
+const _SB = createSandbox();
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], cwd: path.join(__dirname, '..') });
+  const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   console.log('✓ launched');
 
   // 1) 验证 app menu 已装上含 Edit/role:copy 的项
@@ -37,6 +39,15 @@ const path = require('path');
   const win = await app.firstWindow();
   await win.waitForLoadState('domcontentloaded');
 
+  // 等启动器完全 ready（包含 ready-to-show）
+  await win.waitForTimeout(1500);
+  // 确保窗口聚焦（OS 才会路由键盘事件给它）
+  await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0];
+    if (w) { w.show(); w.focus(); }
+  });
+  await win.waitForTimeout(300);
+
   // 在 launcher 窗里注入一个 input 来测
   await win.evaluate(() => {
     const i = document.createElement('input');
@@ -49,7 +60,7 @@ const path = require('path');
   });
 
   // 给 OS 一点时间处理键盘事件
-  await win.waitForTimeout(200);
+  await win.waitForTimeout(400);
 
   // 模拟 ⌘A（全选）然后 ⌘C
   await win.keyboard.press('Meta+a');

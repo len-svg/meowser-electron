@@ -1,9 +1,11 @@
 // 一次性验证 3 个 bug：webview ⌘V / URL bar Enter / pin gates autoShrink
 const { _electron: electron } = require('@playwright/test');
 const path = require('path');
+const { createSandbox } = require('./helpers/sandbox');
+const _SB = createSandbox();
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], cwd: path.join(__dirname, '..') });
+  const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   const launcher = await app.firstWindow();
   await launcher.waitForLoadState('domcontentloaded');
   await launcher.click('.run');

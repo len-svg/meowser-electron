@@ -1,9 +1,11 @@
 // 验证 webview 的 UA 已伪装成 Chrome（不含 Electron/Meowser），permission/device handler 已挂上
 const { _electron: electron } = require('@playwright/test');
 const path = require('path');
+const { createSandbox } = require('./helpers/sandbox');
+const _SB = createSandbox();
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], cwd: path.join(__dirname, '..') });
+  const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   const launcher = await app.firstWindow();
   await launcher.waitForLoadState('domcontentloaded');
 

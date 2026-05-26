@@ -31,12 +31,23 @@ function clear(profileId) {
   save(profileId, { windows: [] });
 }
 
-// 入参：当前所有 BrowserWindow 的 metadata 列表（只包含 profile_id === 我们要保存的）
+// 只保留值得恢复的 URL：http(s) 真实网页
+// 拒绝：data:/about:/chrome:/chrome-extension:/file:/javascript: 等垃圾协议
+// 拒绝：我们自己的工作区首页缓存（file:///.../home_*.html）—— 这些下次启动时自动重建
+function isRestorableUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!/^https?:\/\//i.test(url)) return false;
+  return true;
+}
+
+// 入参：当前所有 BrowserWindow 的 metadata 列表
 function saveFromWindows(profileId, windows) {
-  const filtered = (windows || []).filter(w => w.profile_id === profileId && !w.is_incognito);
+  const filtered = (windows || []).filter(w =>
+    w.profile_id === profileId && !w.is_incognito && isRestorableUrl(w.url)
+  );
   save(profileId, {
     windows: filtered.map(w => ({
-      url: w.url || '',
+      url: w.url,
       title: w.title || '',
       is_small: !!w.is_small,
       is_pinned: !!w.always_on_top,
@@ -44,4 +55,13 @@ function saveFromWindows(profileId, windows) {
   });
 }
 
-module.exports = { load, save, clear, saveFromWindows };
+// 读时也兜底过滤（防御历史脏数据）
+function loadClean(profileId) {
+  const s = load(profileId);
+  return {
+    ...s,
+    windows: (s.windows || []).filter(w => isRestorableUrl(w.url)),
+  };
+}
+
+module.exports = { load, loadClean, save, clear, saveFromWindows, isRestorableUrl };

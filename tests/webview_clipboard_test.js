@@ -1,9 +1,11 @@
 // 准确判断 webview 内 ⌘C/⌘V 是否工作（每步独立 try-catch）
 const { _electron: electron } = require('@playwright/test');
 const path = require('path');
+const { createSandbox } = require('./helpers/sandbox');
+const _SB = createSandbox();
 
 (async () => {
-  const app = await electron.launch({ args: [path.join(__dirname, '..')], cwd: path.join(__dirname, '..') });
+  const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   const launcher = await app.firstWindow();
   await launcher.waitForLoadState('domcontentloaded');
   await launcher.click('.run');

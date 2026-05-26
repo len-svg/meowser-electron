@@ -683,7 +683,7 @@ ipcMain.handle('launch', async (e, profile, opts) => {
   // 检测是否有上次的会话快照可恢复（无痕 / 小窗 / 指定 url 不触发）
   if (!opts.incognito && !opts.small && !opts.url && !opts.skipSessionRestore) {
     try {
-      const snap = sessionStore.load(profile.id);
+      const snap = sessionStore.loadClean(profile.id);
       const n = (snap.windows || []).filter(w => w.url).length;
       // 当前 profile 还有窗口开着，跳过提示（用户已经在用了）
       const alive = [...windowRegistry.values()].some(m => m.profile_id === profile.id);
@@ -1063,10 +1063,10 @@ ipcMain.handle('history:remove', (e, profileId, url)   => { historyStore.remove(
 ipcMain.handle('history:clear',  (e, profileId)        => { historyStore.clear(profileId); return true; });
 
 // ─── 会话恢复 (v0.6.0) ───
-ipcMain.handle('session:peek',   (e, profileId) => sessionStore.load(profileId));
+ipcMain.handle('session:peek',   (e, profileId) => sessionStore.loadClean(profileId));
 ipcMain.handle('session:clear',  (e, profileId) => { sessionStore.clear(profileId); return true; });
 ipcMain.handle('session:restore', (e, profileId) => {
-  const snap = sessionStore.load(profileId);
+  const snap = sessionStore.loadClean(profileId);
   const profiles = loadProfiles();
   const profile = profiles.find(p => p.id === profileId);
   if (!profile) return { ok: false, msg: 'profile not found' };

@@ -1,0 +1,8 @@
+version: 0.6.0
+files:
+  - url: Meowser-0.6.0-arm64.zip
+    sha512: 61Ixd+PL/CuVp+Q6IeQU3SRYbFxJJ39UTLXzDRqKGdAm370C0/NSA7nTI+RBp7gCrlfU+Wy0cknDrvDkyRGwrw==
+    size: 99371269
+path: Meowser-0.6.0-arm64.zip
+sha512: 61Ixd+PL/CuVp+Q6IeQU3SRYbFxJJ39UTLXzDRqKGdAm370C0/NSA7nTI+RBp7gCrlfU+Wy0cknDrvDkyRGwrw==
+releaseDate: '2026-05-26T06:21:01.615Z'
