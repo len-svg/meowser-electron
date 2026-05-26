@@ -110,6 +110,7 @@
       <button class="pill" id="btn-import">📥 导入</button>
       <button class="pill" id="btn-incog">🕶 无痕</button>
       <button class="pill" id="btn-bm">📚 书签</button>
+      <button class="pill" id="btn-history" title="访问历史">📜 历史</button>
       <button class="pill" id="btn-windows" title="窗口管理 (⌃⌘W)">🗂 窗口</button>
       <button class="pill primary" id="btn-new">＋ 新建</button>
     </div>
@@ -204,6 +205,7 @@ function escapeHtml(s) {
 
 document.getElementById('btn-new').addEventListener('click', () => window.api.openEdit(null));
 document.getElementById('btn-windows').addEventListener('click', () => window.api.openWindowManager());
+document.getElementById('btn-history').addEventListener('click', () => window.api.openHistoryManager());
 
 document.getElementById('btn-ext-local').addEventListener('click', async () => {
   const r = await window.api.installLocalExtension();

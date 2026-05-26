@@ -78,6 +78,21 @@ contextBridge.exposeInMainWorld('api', {
   // app 版本
   appVersion: () => ipcRenderer.invoke('app:version'),
 
+  // 历史 (v0.6.0)
+  openHistoryManager: (profileId)       => ipcRenderer.invoke('history:openManager', profileId),
+  historyList:   (profileId)            => ipcRenderer.invoke('history:list', profileId),
+  historySearch: (profileId, q, n)      => ipcRenderer.invoke('history:search', profileId, q, n),
+  historyRemove: (profileId, url)       => ipcRenderer.invoke('history:remove', profileId, url),
+  historyClear:  (profileId)            => ipcRenderer.invoke('history:clear', profileId),
+
+  // 会话恢复 (v0.6.0)
+  sessionPeek:    (profileId) => ipcRenderer.invoke('session:peek', profileId),
+  sessionRestore: (profileId) => ipcRenderer.invoke('session:restore', profileId),
+  sessionClear:   (profileId) => ipcRenderer.invoke('session:clear', profileId),
+
+  // 偏好（per-profile prefs）
+  prefsGet: (profileId) => ipcRenderer.invoke('prefs:get', profileId),
+
   // 窗口管理 (v0.5.0)
   windowsList:               () => ipcRenderer.invoke('windows:list'),
   windowsFocus:              (id) => ipcRenderer.invoke('windows:focus', id),

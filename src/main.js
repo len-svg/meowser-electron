@@ -10,6 +10,9 @@ const slackHome = require('./slack_home');
 const bm = require('./bookmarks_store');
 const crx = require('./crx');
 const migrate = require('./migrate');
+const profilePrefs = require('./profile_prefs');
+const historyStore = require('./history_store');
+const sessionStore = require('./session_store');
 
 // 第三方扩展运行时（提供 chrome.* API + 商店原生安装支持）
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
@@ -210,6 +213,10 @@ function sessionForProfile(profile, { incognito = false } = {}) {
     callback(true);
   });
 
+  // ─── 同步权限检查：Chromium 内部很多操作走这条而非 Request；最关键是 clipboard-* ───
+  // 没装 check handler 的话默认 deny → webview 内 input 的 ⌘C/⌘V 全失效（实测确认）
+  ses.setPermissionCheckHandler(() => true);
+
   // ─── 设备访问授权：HID (FIDO2 安全密钥走这条) / USB / Serial ───
   // YubiKey 通过 USB-HID 用 CTAP2 协议跟浏览器通信，必须显式同意
   ses.setDevicePermissionHandler(() => true);
@@ -309,6 +316,30 @@ function openBookmarkManager(profileId) {
   bmManagerWindow.on('closed', () => { bmManagerWindow = null; });
 }
 
+// ─── 历史管理窗 ───
+let historyManagerWindow = null;
+function openHistoryManager(profileId) {
+  if (historyManagerWindow && !historyManagerWindow.isDestroyed()) {
+    historyManagerWindow.focus();
+    return;
+  }
+  historyManagerWindow = new BrowserWindow({
+    width: 920, height: 600, show: false,
+    backgroundColor: '#ffffff',
+    titleBarStyle: 'hiddenInset',
+    title: '访问历史',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+    },
+  });
+  historyManagerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  const q = profileId ? `?profile=${encodeURIComponent(profileId)}` : '';
+  historyManagerWindow.loadURL(`file://${path.join(__dirname, 'history_manager.html')}${q}`);
+  historyManagerWindow.once('ready-to-show', () => historyManagerWindow.show());
+  historyManagerWindow.on('closed', () => { historyManagerWindow = null; });
+}
+
 // ─── 编辑窗 ───
 let editWindow = null;
 function openEditWindow(profileOrNull) {
@@ -339,19 +370,25 @@ function createBrowserWindow(profile, opts = {}) {
   const w = isSmall ? SMALL_W : LARGE_W;
   const h = isSmall ? SMALL_H : LARGE_H;
 
+  // 读取该 profile 的持久偏好（无痕窗不读，永远默认）
+  const prefs = incognito ? profilePrefs.DEFAULTS : profilePrefs.load(profile.id);
+
   const win = new BrowserWindow({
     width: w, height: h,
     x: display.workArea.x + display.workArea.width - w - 20,
     y: display.workArea.y + 20,
     show: false, frame: true, titleBarStyle: 'hiddenInset',
     title: `${profile.emoji} ${profile.name}${incognito ? ' · 无痕' : ''}`,
-    backgroundColor: '#ffffff', alwaysOnTop: true,
+    backgroundColor: '#ffffff',
+    alwaysOnTop: prefs.always_on_top !== false,   // 默认 true
+    opacity: (typeof prefs.opacity === 'number' ? prefs.opacity : 100) / 100,
     webPreferences: {
       session: sessionForProfile(profile, { incognito }),
       preload: path.join(__dirname, 'preload.js'),
       webviewTag: true, contextIsolation: true,
     },
   });
+  win.__autoShrink = !incognito && !!prefs.auto_shrink;
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   const initialUrl = opts.url || homeUrlFor(profile);
@@ -367,6 +404,8 @@ function createBrowserWindow(profile, opts = {}) {
   win.__incognito = incognito;
   win.on('blur', () => {
     if (win.isDestroyed() || !win.__autoShrink) return;
+    // 大头针置顶时 = 用户明确要求窗口固定，不缩
+    if (win.isAlwaysOnTop()) return;
     const [cw] = win.getSize();
     if (cw > SMALL_W + 20) {
       win.setSize(SMALL_W, SMALL_H, true);
@@ -435,15 +474,46 @@ function registerBrowserWindow(win, { profile, incognito, isSmall }) {
     meta.title = title || meta.title;
     broadcastWindowsChanged();
   });
+  // 'close' (准备关闭，元数据还在) → 保存该 profile 的会话快照
+  win.on('close', () => {
+    if (meta.is_incognito) return;  // 无痕窗不保存
+    try {
+      const survivors = [...windowRegistry.values()].filter(m =>
+        m.profile_id === meta.profile_id && m.window_id !== meta.window_id
+      );
+      // 把当前正在关的也算 saved 状态（用户可能想恢复"曾经开着的"集合）
+      // 但 fork 行为：一个一个关时不该 0 个 → 我们采用"幸存者 + 自己"
+      const snapshot = [...survivors, meta];
+      sessionStore.saveFromWindows(meta.profile_id, snapshot);
+    } catch (e) { console.error('session save', e.message); }
+  });
   win.on('closed', () => {
     windowRegistry.delete(win.id);
     broadcastWindowsChanged();
   });
   // webview attach 时挂事件
   win.webContents.on('did-attach-webview', (_e, wc) => {
-    wc.on('did-navigate',        (_, url) => { meta.url = url; broadcastWindowsChanged(); });
-    wc.on('did-navigate-in-page',(_, url) => { meta.url = url; broadcastWindowsChanged(); });
-    wc.on('page-title-updated',  (_, t)   => { meta.title = t || meta.title; broadcastWindowsChanged(); });
+    wc.on('did-navigate',        (_, url) => { meta.url = url; broadcastWindowsChanged(); historyAddFromWebview(meta.profile_id, meta.is_incognito, url, wc.getTitle()); });
+    wc.on('did-navigate-in-page',(_, url) => { meta.url = url; broadcastWindowsChanged(); historyAddFromWebview(meta.profile_id, meta.is_incognito, url, wc.getTitle()); });
+    wc.on('page-title-updated',  (_, t)   => { meta.title = t || meta.title; broadcastWindowsChanged(); historyAddFromWebview(meta.profile_id, meta.is_incognito, wc.getURL(), t); });
+
+    // ─── webview 内 ⌘C/⌘V/⌘X/⌘A/⌘Z 显式兜底 ───
+    // Chromium 在 webview 子进程对 menu role 的路由有时不工作（实测网页内 input 复制粘贴死）。
+    // 这里直接 listen before-input-event，在主进程对 webview wc 显式调 copy/paste 等。
+    // 用 preventDefault 完全接管，避免 Chromium 也跑导致 paste 双发。
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      if (!(input.meta || input.control)) return;
+      const k = (input.key || '').toLowerCase();
+      if (input.shift && k === 'z') { wc.redo(); event.preventDefault(); return; }
+      switch (k) {
+        case 'c': wc.copy();      event.preventDefault(); break;
+        case 'v': wc.paste();     event.preventDefault(); break;
+        case 'x': wc.cut();       event.preventDefault(); break;
+        case 'a': wc.selectAll(); event.preventDefault(); break;
+        case 'z': wc.undo();      event.preventDefault(); break;
+      }
+    });
   });
   // 首次同步（webview 可能还没 ready，5s 后再来一次保险）
   setTimeout(syncFromWebview, 1500);
@@ -463,6 +533,18 @@ function broadcastWindowsChanged() {
 }
 
 // 取一份当前所有工作区窗口的快照（不含 launcher/editor/bm-mgr/window-mgr 自身）
+// 保存某个 BrowserWindow 对应 profile 的偏好
+function saveProfilePref(win, key, value) {
+  if (!win || !win.profile) return;
+  try { profilePrefs.setOne(win.profile.id, key, value); } catch (e) { console.error('saveProfilePref', e.message); }
+}
+
+// 给 webview 加一条访问历史（过滤无痕和 internal:// urls）
+function historyAddFromWebview(profileId, isIncognito, url, title) {
+  if (isIncognito || !profileId || !url) return;
+  try { historyStore.add(profileId, url, title); } catch (e) { console.error('history.add', e.message); }
+}
+
 function snapshotWindows() {
   const list = [];
   for (const meta of windowRegistry.values()) {
@@ -595,13 +677,46 @@ ipcMain.handle('profiles:delete', (e, id) => {
   return true;
 });
 
-ipcMain.handle('launch', (e, profile, opts) => {
-  createBrowserWindow(profile, opts || {});
+ipcMain.handle('launch', async (e, profile, opts) => {
+  opts = opts || {};
+
+  // 检测是否有上次的会话快照可恢复（无痕 / 小窗 / 指定 url 不触发）
+  if (!opts.incognito && !opts.small && !opts.url && !opts.skipSessionRestore) {
+    try {
+      const snap = sessionStore.load(profile.id);
+      const n = (snap.windows || []).filter(w => w.url).length;
+      // 当前 profile 还有窗口开着，跳过提示（用户已经在用了）
+      const alive = [...windowRegistry.values()].some(m => m.profile_id === profile.id);
+      if (n > 0 && !alive) {
+        const r = await dialog.showMessageBox({
+          type: 'question',
+          title: '恢复上次会话？',
+          message: `「${profile.emoji} ${profile.name}」上次还开着 ${n} 个窗口`,
+          detail: '恢复会按原 URL 打开这些窗口；新窗口将清空快照。',
+          buttons: ['恢复全部', '新窗口', '取消'],
+          defaultId: 0, cancelId: 2,
+        });
+        if (r.response === 2) { return; }
+        if (r.response === 0) {
+          for (const w of snap.windows) {
+            if (w.url) createBrowserWindow(profile, { url: w.url, small: !!w.is_small });
+          }
+          if (launcherWindow) launcherWindow.hide();
+          return;
+        }
+        // response 1 = 新窗口：清快照，正常 fall through
+        sessionStore.clear(profile.id);
+      }
+    } catch (err) { console.error('session restore prompt', err.message); }
+  }
+
+  createBrowserWindow(profile, opts);
   if (launcherWindow) launcherWindow.hide();
 });
 
 ipcMain.handle('edit:open', (e, profile) => openEditWindow(profile || null));
 ipcMain.handle('bm:openManager', (e, profileId) => openBookmarkManager(profileId));
+ipcMain.handle('history:openManager', (e, profileId) => openHistoryManager(profileId));
 ipcMain.handle('edit:close', (e) => { const w = BrowserWindow.fromWebContents(e.sender); if (w) w.close(); });
 
 // ─── 书签 IPC ───
@@ -896,14 +1011,31 @@ ipcMain.handle('window:toggleSize', (e) => {
   return small;
 });
 ipcMain.handle('window:setOpacity', (e, alpha) => {
-  const win = BrowserWindow.fromWebContents(e.sender); if (win) win.setOpacity(alpha);
+  const win = BrowserWindow.fromWebContents(e.sender); if (!win) return;
+  win.setOpacity(alpha);
+  saveProfilePref(win, 'opacity', Math.round(alpha * 100));  // 持久化（0-100）
 });
 ipcMain.handle('window:toggleAlwaysOnTop', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender); if (!win) return false;
-  const cur = win.isAlwaysOnTop(); win.setAlwaysOnTop(!cur); return !cur;
+  const cur = win.isAlwaysOnTop();
+  const next = !cur;
+  win.setAlwaysOnTop(next);
+  // 取消置顶 + 已开启 autoShrink + 当前没聚焦 → 立即触发缩小（"恢复 autoShrink 行为"）
+  if (cur === true && next === false && win.__autoShrink && !win.isFocused()) {
+    const [cw] = win.getSize();
+    if (cw > SMALL_W + 20) {
+      win.setSize(SMALL_W, SMALL_H, true);
+      win.webContents.send('window:resized', { w: SMALL_W, h: SMALL_H, small: true });
+    }
+  }
+  // 持久化到 profile.prefs.always_on_top
+  saveProfilePref(win, 'always_on_top', next);
+  return next;
 });
 ipcMain.handle('window:setAutoShrink', (e, v) => {
-  const win = BrowserWindow.fromWebContents(e.sender); if (win) win.__autoShrink = !!v;
+  const win = BrowserWindow.fromWebContents(e.sender); if (!win) return false;
+  win.__autoShrink = !!v;
+  saveProfilePref(win, 'auto_shrink', !!v);
   return !!v;
 });
 ipcMain.handle('window:openExternal', (e, url, app) => {
@@ -923,6 +1055,32 @@ ipcMain.handle('window:relaunchIncognito', (e) => {
 ipcMain.handle('layout:arrange', (e, edge, style) => arrangeWindows(edge, style));
 ipcMain.handle('home:url', (e, profile) => homeUrlFor(profile));
 ipcMain.handle('app:version', () => app.getVersion());
+
+// ─── 历史 (v0.6.0) ───
+ipcMain.handle('history:list',   (e, profileId)        => historyStore.load(profileId));
+ipcMain.handle('history:search', (e, profileId, q, n)  => historyStore.search(profileId, q, n || 200));
+ipcMain.handle('history:remove', (e, profileId, url)   => { historyStore.remove(profileId, url); return true; });
+ipcMain.handle('history:clear',  (e, profileId)        => { historyStore.clear(profileId); return true; });
+
+// ─── 会话恢复 (v0.6.0) ───
+ipcMain.handle('session:peek',   (e, profileId) => sessionStore.load(profileId));
+ipcMain.handle('session:clear',  (e, profileId) => { sessionStore.clear(profileId); return true; });
+ipcMain.handle('session:restore', (e, profileId) => {
+  const snap = sessionStore.load(profileId);
+  const profiles = loadProfiles();
+  const profile = profiles.find(p => p.id === profileId);
+  if (!profile) return { ok: false, msg: 'profile not found' };
+  let opened = 0;
+  for (const w of (snap.windows || [])) {
+    if (!w.url) continue;
+    createBrowserWindow(profile, { url: w.url, small: !!w.is_small });
+    opened++;
+  }
+  return { ok: true, opened };
+});
+
+// ─── 偏好读取（renderer 知道当前持久化值，用于 UI 同步）───
+ipcMain.handle('prefs:get', (e, profileId) => profilePrefs.load(profileId));
 
 // ─── 窗口管理 (v0.5.0) ───
 ipcMain.handle('windows:list', () => snapshotWindows());
@@ -1143,3 +1301,19 @@ app.whenReady().then(() => {
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());
+
+// 退出 app 前：保存所有 profile 的当前会话（在窗口被销毁前抢救一次）
+app.on('before-quit', () => {
+  try {
+    const byProfile = new Map();
+    for (const meta of windowRegistry.values()) {
+      if (meta.is_incognito) continue;
+      if (!byProfile.has(meta.profile_id)) byProfile.set(meta.profile_id, []);
+      byProfile.get(meta.profile_id).push(meta);
+    }
+    for (const [pid, windows] of byProfile) {
+      sessionStore.saveFromWindows(pid, windows);
+    }
+    console.log(`✓ 退出前保存 ${byProfile.size} 个 profile 的会话快照`);
+  } catch (e) { console.error('before-quit session save', e.message); }
+});

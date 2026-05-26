@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>访问历史 · Meowser</title>
+<style>
+  *,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    background: #fff; color: #1f1f1f;
+    -webkit-user-select: none;
+    display: flex; flex-direction: column;
+  }
+  .header {
+    height: 56px; padding: 0 20px;
+    display: flex; align-items: center; gap: 12px;
+    background: #f5f5f7;
+    border-bottom: 1px solid rgba(0,0,0,0.08);
+    -webkit-app-region: drag;
+    flex-shrink: 0;
+  }
+  .header .title { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .header .pid {
+    margin-left: 8px; font-size: 11px; color: rgba(0,0,0,0.5);
+    padding: 3px 8px; border-radius: 4px; background: rgba(0,0,0,0.04);
+    font-family: ui-monospace, monospace;
+  }
+  .header .actions { margin-left: auto; display: flex; gap: 6px; -webkit-app-region: no-drag; }
+  .header .btn {
+    height: 28px; padding: 0 12px;
+    background: #fff; color: #1f1f1f;
+    border: 1px solid rgba(0,0,0,0.12);
+    border-radius: 6px;
+    font-size: 12px; cursor: pointer;
+  }
+  .header .btn:hover { background: rgba(0,0,0,0.04); }
+  .header .btn.danger { color: #d93025; }
+  .header .btn.danger:hover { background: rgba(217,48,37,0.10); }
+
+  .body { flex: 1; display: flex; overflow: hidden; }
+
+  .sidebar {
+    width: 200px; flex-shrink: 0;
+    border-right: 1px solid rgba(0,0,0,0.06);
+    padding: 12px 8px; overflow-y: auto;
+    background: #fafafa;
+  }
+  .sidebar h3 {
+    font-size: 10px; color: #80868b;
+    text-transform: uppercase; letter-spacing: 0.6px;
+    padding: 8px 12px 4px; font-weight: 600;
+  }
+  .sidebar .item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: 6px;
+    cursor: pointer; font-size: 13px;
+    margin-bottom: 2px;
+  }
+  .sidebar .item:hover { background: rgba(0,0,0,0.04); }
+  .sidebar .item.active { background: #1a73e8; color: white; }
+  .sidebar .item .num {
+    margin-left: auto; font-size: 11px; opacity: 0.7;
+    font-family: ui-monospace, monospace;
+  }
+
+  .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  .toolbar {
+    padding: 12px 20px;
+    border-bottom: 1px solid rgba(0,0,0,0.06);
+    display: flex; gap: 8px; align-items: center;
+    flex-shrink: 0;
+  }
+  .toolbar input {
+    flex: 1; height: 32px; padding: 0 12px;
+    background: #fff; border: 1px solid rgba(0,0,0,0.12);
+    border-radius: 6px; font-size: 13px; color: #1f1f1f; outline: none;
+  }
+  .toolbar input:focus { border-color: #1a73e8; box-shadow: 0 0 0 3px rgba(26,115,232,0.10); }
+
+  .list { flex: 1; overflow-y: auto; }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 20px;
+    border-bottom: 1px solid rgba(0,0,0,0.04);
+    cursor: pointer;
+  }
+  .row:hover { background: rgba(0,0,0,0.03); }
+  .row img.fav { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.85; }
+  .row .meta { flex: 1; min-width: 0; }
+  .row .meta .title { font-size: 13px; color: #1f1f1f; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .meta .url   { font-size: 11px; color: rgba(0,0,0,0.5); font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .time { font-size: 11px; color: rgba(0,0,0,0.5); font-family: ui-monospace, monospace; flex-shrink: 0; }
+  .row .visits { font-size: 10px; padding: 2px 6px; border-radius: 8px; background: rgba(0,0,0,0.05); color: rgba(0,0,0,0.6); flex-shrink: 0; }
+  .row .x {
+    width: 24px; height: 24px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; color: rgba(0,0,0,0.4);
+    opacity: 0; cursor: pointer;
+  }
+  .row:hover .x { opacity: 1; }
+  .row .x:hover { background: rgba(217,48,37,0.10); color: #d93025; }
+
+  .day-group { padding: 16px 20px 6px; font-size: 12px; color: #80868b; text-transform: uppercase; letter-spacing: 0.4px; }
+
+  .empty {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; padding: 40px; color: rgba(0,0,0,0.4);
+  }
+  .empty .ico { font-size: 32px; }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="title">📜 访问历史</div>
+    <span class="pid" id="cur-profile">—</span>
+    <div class="actions">
+      <button class="btn danger" id="btn-clear">清空当前工作区历史</button>
+    </div>
+  </div>
+  <div class="body">
+    <aside class="sidebar">
+      <h3>工作区</h3>
+      <div id="ws-list"></div>
+    </aside>
+    <div class="main">
+      <div class="toolbar">
+        <input id="search" placeholder="搜索 title 或 URL…" autofocus>
+      </div>
+      <div class="list" id="list"></div>
+    </div>
+  </div>
+
+<script>
+let profiles = [];
+let currentPid = null;
+let allEntries = [];
+
+function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function safeHost(u){try{return new URL(u).hostname}catch{return''}}
+
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) {
+    return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function dayLabel(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const day = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diff = (today - day) / 86400000;
+  if (diff === 0) return '今天';
+  if (diff === 1) return '昨天';
+  if (diff < 7) return `${diff} 天前`;
+  return d.toLocaleDateString('zh-CN');
+}
+
+async function loadProfiles() {
+  profiles = await window.api.listProfiles();
+  const wsList = document.getElementById('ws-list');
+  wsList.innerHTML = '';
+  for (const p of profiles) {
+    const list = await window.api.historyList(p.id);
+    const item = document.createElement('div');
+    item.className = 'item' + (p.id === currentPid ? ' active' : '');
+    item.innerHTML = `<span>${escapeHtml(p.emoji||'🐱')}</span><span>${escapeHtml(p.name)}</span><span class="num">${list.length}</span>`;
+    item.onclick = () => { currentPid = p.id; render(); };
+    wsList.appendChild(item);
+  }
+}
+
+async function render() {
+  if (!currentPid && profiles.length > 0) currentPid = profiles[0].id;
+  document.getElementById('cur-profile').textContent = currentPid || '—';
+
+  // 重新点亮 sidebar active
+  [...document.querySelectorAll('.sidebar .item')].forEach((el, i) => {
+    el.classList.toggle('active', profiles[i] && profiles[i].id === currentPid);
+  });
+
+  allEntries = currentPid ? await window.api.historyList(currentPid) : [];
+  renderList();
+}
+
+function renderList() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const list = document.getElementById('list');
+  list.innerHTML = '';
+
+  // 倒序（最近在前）
+  let entries = allEntries.slice().reverse();
+  if (q) entries = entries.filter(h => (h.title||'').toLowerCase().includes(q) || (h.url||'').toLowerCase().includes(q));
+
+  if (entries.length === 0) {
+    list.innerHTML = '<div class="empty"><div class="ico">📜</div><div>没有匹配的历史记录</div></div>';
+    return;
+  }
+
+  let curDay = '';
+  for (const h of entries) {
+    const day = dayLabel(h.last_visit_at);
+    if (day !== curDay) {
+      curDay = day;
+      const dg = document.createElement('div');
+      dg.className = 'day-group';
+      dg.textContent = day;
+      list.appendChild(dg);
+    }
+    const row = document.createElement('div');
+    row.className = 'row';
+    const host = safeHost(h.url);
+    row.innerHTML = `
+      <img class="fav" src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(host)}" onerror="this.style.display='none'">
+      <div class="meta">
+        <div class="title">${escapeHtml(h.title || h.url)}</div>
+        <div class="url">${escapeHtml(h.url)}</div>
+      </div>
+      <div class="visits" title="访问次数">${h.visit_count || 1}×</div>
+      <div class="time">${fmtTime(h.last_visit_at)}</div>
+      <span class="x" title="删除此条">✕</span>
+    `;
+    row.querySelector('.x').onclick = async (ev) => {
+      ev.stopPropagation();
+      await window.api.historyRemove(currentPid, h.url);
+      await render();
+    };
+    row.onclick = () => {
+      // 复制 URL 到剪贴板（无 webview 可打开，只能这样）
+      window.api.copyText(h.url);
+    };
+    list.appendChild(row);
+  }
+}
+
+document.getElementById('search').addEventListener('input', renderList);
+document.getElementById('btn-clear').onclick = async () => {
+  if (!currentPid) return;
+  if (!confirm(`确认清空「${currentPid}」工作区的全部历史记录？此操作不可恢复。`)) return;
+  await window.api.historyClear(currentPid);
+  await render();
+  await loadProfiles();
+};
+
+(async () => {
+  await loadProfiles();
+  if (profiles.length > 0) currentPid = profiles[0].id;
+  await render();
+})();
+</script>
+</body>
+</html>
