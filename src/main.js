@@ -773,7 +773,65 @@ ipcMain.handle('clipboard:writeText', (e, text) => {
   require('electron').clipboard.writeText(String(text || ''));
 });
 
+// macOS 必须装一个含 Edit role 的应用菜单，⌘C/⌘V/⌘X/⌘A 才会被路由到聚焦的网页内容。
+// 不调 setApplicationMenu 时 Electron 给的默认菜单**不含** Edit role —— 这就是为啥之前 ⌘C/⌘V 全失效。
+function installAppMenu() {
+  const isMac = process.platform === 'darwin';
+  const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { label: '启动器…', accelerator: 'Cmd+Alt+L', click: () => createLauncher() },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    }] : []),
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo',       label: '撤销' },
+        { role: 'redo',       label: '重做' },
+        { type: 'separator' },
+        { role: 'cut',        label: '剪切' },
+        { role: 'copy',       label: '复制' },
+        { role: 'paste',      label: '粘贴' },
+        { role: 'pasteAndMatchStyle', label: '粘贴并匹配样式' },
+        { role: 'delete',     label: '删除' },
+        { role: 'selectAll',  label: '全选' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload',           label: '刷新',     accelerator: 'CmdOrCtrl+R' },
+        { role: 'forceReload',      label: '强制刷新', accelerator: 'CmdOrCtrl+Shift+R' },
+        { role: 'toggleDevTools',   label: '开发者工具', accelerator: 'CmdOrCtrl+Alt+I' },
+        { type: 'separator' },
+        { role: 'resetZoom',        label: '实际大小' },
+        { role: 'zoomIn',           label: '放大' },
+        { role: 'zoomOut',          label: '缩小' },
+        { type: 'separator' },
+        { role: 'togglefullscreen', label: '全屏' },
+      ],
+    },
+    {
+      label: '窗口',
+      role: 'windowMenu',
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.whenReady().then(() => {
+  installAppMenu();          // ← 必须在 createLauncher 之前
   createLauncher();
   createTray();
   globalShortcut.register('Alt+`', toggleAllWindows);
