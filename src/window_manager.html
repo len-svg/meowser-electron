@@ -238,6 +238,8 @@
   <div class="list" id="list"></div>
 
   <div class="footer">
+    <button class="btn" id="btn-arrange-tile" title="平铺所有窗口（右侧竖排）">▤ 平铺</button>
+    <button class="btn" id="btn-arrange-cascade" title="层叠堆放所有窗口">▥ 叠放</button>
     <button class="btn" id="btn-keep-focused"><span>✓</span> 留聚焦 关其他</button>
     <button class="btn" id="btn-close-profile">关此工作区</button>
     <button class="btn" id="btn-close-incog">关所有无痕</button>
@@ -430,6 +432,8 @@ document.getElementById('clear-sel').onclick = () => { state.selected.clear(); r
 document.getElementById('btn-bulk-close').onclick = async () => {
   await window.api.windowsCloseBatch([...state.selected], false);
 };
+document.getElementById('btn-arrange-tile').onclick = () => window.api.arrange('right', 'tile');
+document.getElementById('btn-arrange-cascade').onclick = () => window.api.arrange('right', 'cascade');
 document.getElementById('btn-keep-focused').onclick = () => window.api.windowsKeepFocusedCloseOthers();
 document.getElementById('btn-close-profile').onclick = () => {
   // 取当前过滤的 profile；如果是 all/incog 则不动作

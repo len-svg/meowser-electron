@@ -54,7 +54,9 @@ function saveProfiles(ps) {
 function workHomeUrl(profile) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
   const fp = path.join(CACHE_DIR, `home_${profile.id}.html`);
-  fs.writeFileSync(fp, renderWorkHome(profile, bm.load(profile.id)), 'utf8');
+  // 最近访问取最后 8 条（倒序），传给首页渲染
+  const recent = historyStore.load(profile.id).slice(-8).reverse();
+  fs.writeFileSync(fp, renderWorkHome(profile, bm.load(profile.id), recent), 'utf8');
   return `file://${fp}`;
 }
 function slackHomeUrl(profile) {
@@ -360,8 +362,11 @@ function openEditWindow(profileOrNull) {
 }
 
 // ─── 浏览器窗 ───
-const SMALL_W = 320, SMALL_H = 240;
+// 大小窗严格等比：小窗 = 大窗 × 0.38，保持同一宽高比（1200:800 = 3:2）
 const LARGE_W = 1200, LARGE_H = 800;
+const SMALL_SCALE = 0.38;
+const SMALL_W = Math.round(LARGE_W * SMALL_SCALE);   // 456
+const SMALL_H = Math.round(LARGE_H * SMALL_SCALE);   // 304
 
 function createBrowserWindow(profile, opts = {}) {
   const display = screen.getPrimaryDisplay();
@@ -506,6 +511,17 @@ function registerBrowserWindow(win, { profile, incognito, isSmall }) {
       if (!(input.meta || input.control)) return;
       const k = (input.key || '').toLowerCase();
       if (input.shift && k === 'z') { wc.redo(); event.preventDefault(); return; }
+      // ─── 缩放网页内容（⌘+ / ⌘- / ⌘0）───
+      // View 菜单的 zoom role 缩放的是 chrome.html 外壳，不是网页；这里直接缩 webview
+      if (k === '=' || k === '+') {  // ⌘+ (= 键，shift 时是 +)
+        const z = wc.getZoomLevel(); wc.setZoomLevel(Math.min(z + 0.5, 5)); event.preventDefault(); return;
+      }
+      if (k === '-' || k === '_') {  // ⌘-
+        const z = wc.getZoomLevel(); wc.setZoomLevel(Math.max(z - 0.5, -3)); event.preventDefault(); return;
+      }
+      if (k === '0') {               // ⌘0 重置
+        wc.setZoomLevel(0); event.preventDefault(); return;
+      }
       switch (k) {
         case 'c': wc.copy();      event.preventDefault(); break;
         case 'v': wc.paste();     event.preventDefault(); break;
@@ -631,6 +647,27 @@ function toggleAllWindows() {
   const anyVisible = all.some(w => w.isVisible());
   all.forEach(w => anyVisible ? w.hide() : w.show());
 }
+function showAllWindows() {
+  const all = BrowserWindow.getAllWindows().filter(w => w.profile);
+  if (all.length === 0) { createLauncher(); return; }
+  all.forEach(w => w.show());
+}
+function hideAllWindows() {
+  BrowserWindow.getAllWindows().filter(w => w.profile).forEach(w => w.hide());
+}
+
+// 在所有工作区窗口之间循环聚焦（dir = +1 下一个 / -1 上一个）
+function cycleWindows(dir) {
+  const wins = BrowserWindow.getAllWindows()
+    .filter(w => w.profile && w.isVisible())
+    .sort((a, b) => a.id - b.id);
+  if (wins.length === 0) return;
+  const focused = BrowserWindow.getFocusedWindow();
+  let idx = focused ? wins.findIndex(w => w.id === focused.id) : -1;
+  idx = (idx + dir + wins.length) % wins.length;
+  const target = wins[idx];
+  if (target) { target.show(); target.focus(); }
+}
 
 function arrangeWindows(edge, style) {
   const wins = BrowserWindow.getAllWindows().filter(w => w.profile && w.isVisible());
@@ -732,6 +769,17 @@ ipcMain.handle('bm:remove', (e, profileId, url) => {
   return list;
 });
 ipcMain.handle('bm:reorder', (e, profileId, urls) => bm.reorder(profileId, urls));
+ipcMain.handle('bm:setFolder', (e, profileId, url, folder) => {
+  const list = bm.setFolder(profileId, url, folder);
+  broadcastBmChange(profileId);
+  return list;
+});
+ipcMain.handle('bm:folders', (e, profileId) => bm.folders(profileId));
+ipcMain.handle('bm:renameFolder', (e, profileId, oldName, newName) => {
+  const list = bm.renameFolder(profileId, oldName, newName);
+  broadcastBmChange(profileId);
+  return list;
+});
 ipcMain.handle('bm:importChrome', (e, profileId) => {
   const r = bm.importFromChrome(profileId);
   broadcastBmChange(profileId);
@@ -1294,10 +1342,21 @@ app.whenReady().then(() => {
   installAppMenu();          // ← 必须在 createLauncher 之前
   createLauncher();
   createTray();
+  // Option+` 一键显示/隐藏所有窗口
   globalShortcut.register('Alt+`', toggleAllWindows);
+  // Option+Shift+` 一键唤起所有 / Option+Cmd+` 一键隐藏所有（拆开按需）
+  globalShortcut.register('Alt+Shift+`', showAllWindows);
+  globalShortcut.register('Alt+Cmd+`', hideAllWindows);
   globalShortcut.register('CommandOrControl+Alt+L', () => createLauncher());
   // ⌃⌘W 唤起窗口管理器（与 macOS 系统的 ⌘W 关闭窗口冲突，故用 Ctrl+Cmd 组合）
   globalShortcut.register('Control+Cmd+W', () => openWindowManager());
+  // ─── 窗口循环切换 ───
+  // 注意：Cmd+方向键 在文本框里是"行首/行尾/文首/文末"，全局抢占会破坏所有输入。
+  // 因此用 Cmd+Alt+方向键（不与文本编辑冲突）。Cmd+Alt+← / → 上一个 / 下一个窗口。
+  globalShortcut.register('Cmd+Alt+Right', () => cycleWindows(+1));
+  globalShortcut.register('Cmd+Alt+Left',  () => cycleWindows(-1));
+  globalShortcut.register('Cmd+Alt+Down',  () => cycleWindows(+1));
+  globalShortcut.register('Cmd+Alt+Up',    () => cycleWindows(-1));
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());

@@ -230,7 +230,7 @@
         <div></div>
         <div>NAME / URL</div>
         <div>添加于</div>
-        <div>操作</div>
+        <div>文件夹</div>
         <div></div>
       </div>
       <div class="list" id="list"></div>
@@ -375,9 +375,17 @@ function renderListRows() {
         <span class="note">${escapeHtml(b.url)}</span>
       </div>
       <div class="age" title="${b.ts ? new Date(b.ts).toLocaleString() : ''}">${fmtAge(b.ts)}</div>
-      <div class="age">手动 / 导入</div>
+      <div class="age folder-cell" style="cursor:pointer;text-decoration:underline dotted" title="点击设置文件夹">${b.folder ? '📁 ' + escapeHtml(b.folder) : '＋ 文件夹'}</div>
       <button class="del" title="删除">🗑</button>
     `;
+    row.querySelector('.folder-cell').onclick = async (e) => {
+      e.stopPropagation();
+      const cur = b.folder || '';
+      const folder = prompt('设置文件夹名（留空=未分类）：', cur);
+      if (folder === null) return;  // 取消
+      await window.api.setBookmarkFolder(currentProfileId, b.url, folder.trim());
+      await refreshList();
+    };
     row.querySelector('input[type=checkbox]').onclick = (e) => {
       e.stopPropagation();
       if (e.target.checked) selected.add(b.url); else selected.delete(b.url);

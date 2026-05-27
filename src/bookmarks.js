@@ -2,15 +2,42 @@
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function safeHost(u){try{return new URL(u).hostname}catch{return''}}
 
-function renderWorkHome(profile, bookmarks = []) {
-  const themeColors = { red: '#FF3B30', green: '#34C759', yellow: '#FFCC00' };
-  const themeColor = themeColors[profile.theme] || '#FFCC00';
-
-  const items = bookmarks.map(b => `
+function bmCard(b) {
+  return `
     <a href="${escapeHtml(b.url)}" title="${escapeHtml(b.url)}">
       <img src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(safeHost(b.url))}" onerror="this.style.display='none'">
       <span>${escapeHtml(b.title || b.url)}</span>
-    </a>`).join('');
+    </a>`;
+}
+
+function renderWorkHome(profile, bookmarks = [], recent = []) {
+  const themeColors = { red: '#FF3B30', green: '#34C759', yellow: '#FFCC00' };
+  const themeColor = themeColors[profile.theme] || '#FFCC00';
+
+  // 按 folder 分组：未分类在前，文件夹按名排序
+  const groups = new Map();
+  bookmarks.forEach(b => {
+    const k = b.folder || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(b);
+  });
+  const folderNames = [...groups.keys()].filter(k => k).sort();
+  const ordered = ['', ...folderNames];  // 未分类('')在最前
+
+  const bookmarkSections = ordered.filter(k => groups.has(k)).map(folder => {
+    const list = groups.get(folder);
+    const title = folder ? `📁 ${escapeHtml(folder)}` : '未分类';
+    return `<section>
+      <h2>${title} <span class="cnt">${list.length}</span></h2>
+      <div class="grid">${list.map(bmCard).join('')}</div>
+    </section>`;
+  }).join('');
+
+  // 最近访问
+  const recentSection = recent.length === 0 ? '' : `<section>
+    <h2>🕘 最近访问 <span class="cnt">${recent.length}</span></h2>
+    <div class="grid">${recent.map(h => bmCard({ url: h.url, title: h.title })).join('')}</div>
+  </section>`;
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(profile.name)}</title>
 <style>
@@ -38,12 +65,10 @@ section h2{font-size:13px;text-transform:uppercase;color:#86868b;letter-spacing:
   <input name="q" placeholder="Google 搜索..." autofocus>
   <button>搜索</button>
 </form>
-<section>
-  <h2>书签 <span class="cnt">${bookmarks.length}</span></h2>
-  ${bookmarks.length === 0
-    ? '<div class="empty">还没书签 — 浏览时点工具栏 <kbd>⭐</kbd> 添加，或点工具栏 <kbd>📚</kbd> →「从 Chrome 导入」</div>'
-    : `<div class="grid">${items}</div>`}
-</section>
+${recentSection}
+${bookmarks.length === 0
+  ? '<section><h2>书签 <span class="cnt">0</span></h2><div class="empty">还没书签 — 浏览时点工具栏 <kbd>⭐</kbd> 添加，或点工具栏 <kbd>📚</kbd> →「从 Chrome 导入」</div></section>'
+  : bookmarkSections}
 </body></html>`;
 }
 
