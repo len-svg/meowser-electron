@@ -115,8 +115,36 @@
 
   /* ─── 右侧 actions ─── */
   .actions { display: flex; align-items: center; gap: 0; }
-  .actions .pinned-ext { display: flex; align-items: center; gap: 0; padding-right: 4px; border-right: 1px solid rgba(0,0,0,0.10); margin-right: 4px; }
+  .actions .pinned-ext { display: flex; align-items: center; gap: 2px; padding-right: 4px; border-right: 1px solid rgba(0,0,0,0.10); margin-right: 4px; }
   .actions .pinned-ext:empty { display: none; }
+  .ext-action-btn {
+    width: 30px; height: 30px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; cursor: pointer;
+    background: transparent; border: none; padding: 0;
+    transition: background 0.12s;
+    position: relative;
+  }
+  .ext-action-btn:hover { background: rgba(0,0,0,0.08); }
+  .ext-action-btn img { width: 18px; height: 18px; }
+  .ext-action-btn.fallback {
+    color: #5f6368; font-size: 13px; font-weight: 600;
+    font-family: -apple-system, sans-serif;
+  }
+  .ext-action-btn .ext-badge {
+    position: absolute; right: 1px; bottom: 1px;
+    min-width: 14px; height: 14px; padding: 0 3px;
+    border-radius: 7px;
+    background: #d93025; color: white;
+    font-size: 9px; font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center;
+    line-height: 1; box-shadow: 0 0 0 1.5px #f1f3f4;
+  }
+  .ext-action-btn.failed::after {
+    content: ''; position: absolute; right: 4px; top: 4px;
+    width: 6px; height: 6px; background: #d93025; border-radius: 50%;
+    box-shadow: 0 0 0 1.5px #f1f3f4;
+  }
   .ext-icon {
     width: 28px; height: 28px; border-radius: 50%;
     display: inline-flex; align-items: center; justify-content: center;
@@ -718,14 +746,34 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); doToggleSize(); }
 });
 
-// ─── URL 同步 ───
+// ─── URL 同步（多路触发兜底，防止任何一条路径漏掉）───
 function syncUrl() {
-  if (document.activeElement !== urlInput) urlInput.value = safeGetURL();
+  // 用户正在输入就别覆盖
+  if (document.activeElement === urlInput) { updateStar(); return; }
+  const u = safeGetURL();
+  // 工作区首页 file:// 的 URL 没意义，留空让用户输入
+  if (!u || /^file:\/\/.*home_[a-z_0-9]+\.html$/i.test(u)) {
+    urlInput.value = '';
+  } else {
+    urlInput.value = u;
+  }
   updateStar();
 }
-wv.addEventListener('did-navigate',         () => { syncUrl(); maybeInjectStoreButton(); });
-wv.addEventListener('did-navigate-in-page', () => { syncUrl(); maybeInjectStoreButton(); });
-wv.addEventListener('did-finish-load',      () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-navigate',          () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-navigate-in-page',  () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-finish-load',       () => { syncUrl(); maybeInjectStoreButton(); });
+wv.addEventListener('did-start-loading',     () => { syncUrl(); });
+wv.addEventListener('did-stop-loading',      () => { syncUrl(); });
+wv.addEventListener('dom-ready',             () => { syncUrl(); });
+// 兜底：每 1s 拉一次，确保即使事件漏掉 URL bar 也会跟上（开销可忽略）
+setInterval(() => { try { syncUrl(); } catch {} }, 1000);
+// 兜底 2：监听 wv.src 属性变化（programmatic 改 src 时立刻反映）
+try {
+  new MutationObserver(() => {
+    // src 变化但 webview 还没 commit；先把 src 值当作 URL 显示
+    if (document.activeElement !== urlInput) urlInput.value = wv.getAttribute('src') || '';
+  }).observe(wv, { attributes: true, attributeFilter: ['src'] });
+} catch {}
 
 // ─── 链接 → 新窗口（不要 tabs）；meowser-install:// → 装扩展 ───
 wv.addEventListener('new-window', e => {
@@ -882,6 +930,47 @@ window.api.onBookmarksChanged((pid) => {
 });
 renderBmbar();
 refreshBookmarkedSet();
+
+// ─── 扩展图标渲染到工具栏右侧（Chrome 风）───
+async function renderPinnedExts() {
+  const wrap = document.getElementById('pinned-ext');
+  wrap.innerHTML = '';
+  if (isIncognito) return;
+  let list = [];
+  try { list = await window.api.listExtensions(profile.id); } catch { return; }
+  // 只渲染有 action 的扩展（其他没有 popup 没意义）+ 显示 loaded/failed 状态
+  for (const ext of list) {
+    if (!ext.action) continue;
+    const btn = document.createElement('button');
+    btn.className = 'ext-action-btn' + (ext.state === 'failed' ? ' failed' : '');
+    btn.title = (ext.action.title || ext.name) + (ext.state === 'failed' ? ' · 加载失败' : '');
+    if (ext.action.icon) {
+      btn.innerHTML = `<img src="${ext.action.icon}" alt="${escapeHtml(ext.name)}">`;
+    } else {
+      // 取扩展名首字 fallback
+      btn.classList.add('fallback');
+      btn.textContent = (ext.name || '?').trim().charAt(0).toUpperCase();
+    }
+    btn.onclick = async () => {
+      if (!ext.action.popup) {
+        toast(`${ext.name} 没有 popup（只是 action 触发，未实现）`);
+        return;
+      }
+      const r = btn.getBoundingClientRect();
+      const popupW = 360, popupH = 480;
+      // 算屏幕坐标：webview 的 BrowserWindow 内部坐标 + 估算窗口位置
+      // 简化：让主进程在按钮"附近"开 popup
+      const win = await window.api.openExtensionPopup({
+        profileId: profile.id,
+        extDir: ext.dir,
+        anchor: { x: Math.round(window.screenX + r.right - popupW), y: Math.round(window.screenY + r.bottom + 4), w: popupW, h: popupH },
+      });
+      if (win && !win.ok) toast(`✗ ${win.msg}`, 'error');
+    };
+    wrap.appendChild(btn);
+  }
+}
+renderPinnedExts();
 
 // 自动更新状态推送
 window.api.onUpdaterStatus(s => {

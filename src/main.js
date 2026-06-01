@@ -891,6 +891,19 @@ ipcMain.handle('ui:askText', async (e, { title, label, placeholder }) => {
   });
 });
 
+// 从 manifest 的 icon 字段（可能是字符串或 {16,24,32,48,128}: path）取最佳尺寸
+function pickIconPath(extDir, iconField, preferSize) {
+  if (!iconField) return null;
+  if (typeof iconField === 'string') return path.join(extDir, iconField);
+  if (typeof iconField === 'object') {
+    const sizes = Object.keys(iconField).map(s => parseInt(s)).filter(n => !isNaN(n)).sort((a,b)=>a-b);
+    if (sizes.length === 0) return null;
+    let pick = sizes.find(s => s >= (preferSize || 24)) || sizes[sizes.length-1];
+    return path.join(extDir, iconField[String(pick)]);
+  }
+  return null;
+}
+
 ipcMain.handle('extension:list', (e, profileId) => {
   const dir = path.join(DATA_DIR, 'extensions', profileId);
   if (!fs.existsSync(dir)) return [];
@@ -899,18 +912,79 @@ ipcMain.handle('extension:list', (e, profileId) => {
     .map(name => {
       const p = path.join(dir, name);
       const meta = readManifest(p);
+      const m = meta.raw || {};
       const status = extStatus.get(`${profileId}|${name}`) || { state: 'pending' };
+      // browser_action (MV2) / action (MV3) — 两者结构一致
+      const action = m.action || m.browser_action || null;
+      let actionIcon = null, actionPopup = null, actionTitle = '';
+      if (action) {
+        actionIcon  = pickIconPath(p, action.default_icon || m.icons, 24);
+        actionPopup = action.default_popup ? path.join(p, action.default_popup) : null;
+        actionTitle = action.default_title || meta.name;
+      } else if (m.icons) {
+        actionIcon = pickIconPath(p, m.icons, 24);
+        actionTitle = meta.name;
+      }
       return {
         dir: name,
         name: meta.name,
         version: meta.version,
         description: meta.description,
         manifestVersion: meta.manifestVersion,
-        state: status.state,             // pending | loading | loaded | failed
+        state: status.state,
         error: status.error || '',
         id: status.id || '',
+        action: action ? {
+          // file:// URL 给前端直接用作 <img src>
+          icon:  actionIcon  && fs.existsSync(actionIcon)  ? 'file://' + actionIcon : null,
+          popup: actionPopup && fs.existsSync(actionPopup) ? actionPopup : null,
+          title: actionTitle,
+        } : null,
       };
     });
+});
+
+// 打开扩展的 popup（点击图标时调用）
+const extPopupWindows = new Map();  // extId → BrowserWindow
+ipcMain.handle('extension:openPopup', (e, payload) => {
+  const { profileId, extDir, anchor } = payload || {};
+  const list = fs.readdirSync(path.join(DATA_DIR, 'extensions', profileId));
+  if (!list.includes(extDir)) return { ok: false, msg: 'not found' };
+  const p = path.join(DATA_DIR, 'extensions', profileId, extDir);
+  const meta = readManifest(p);
+  const m = meta.raw || {};
+  const action = m.action || m.browser_action;
+  if (!action || !action.default_popup) return { ok: false, msg: 'no popup' };
+  const popupHtml = path.join(p, action.default_popup);
+  if (!fs.existsSync(popupHtml)) return { ok: false, msg: 'popup file missing' };
+
+  // 关闭已有的 popup（chrome 行为：同时只允许一个）
+  for (const [k, w] of extPopupWindows) {
+    if (!w.isDestroyed()) w.close();
+    extPopupWindows.delete(k);
+  }
+
+  const popup = new BrowserWindow({
+    width: (anchor && anchor.w) || 360,
+    height: (anchor && anchor.h) || 480,
+    x: (anchor && anchor.x) || undefined,
+    y: (anchor && anchor.y) || undefined,
+    frame: false, resizable: true, show: false,
+    backgroundColor: '#ffffff',
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    webPreferences: {
+      session: session.fromPartition(`persist:meowser-${profileId}`),
+      contextIsolation: true,
+      sandbox: false,
+    },
+  });
+  popup.loadFile(popupHtml);
+  popup.once('ready-to-show', () => popup.show());
+  popup.on('blur', () => { if (!popup.isDestroyed()) popup.close(); });
+  popup.on('closed', () => extPopupWindows.delete(extDir));
+  extPopupWindows.set(extDir, popup);
+  return { ok: true };
 });
 ipcMain.handle('extension:reload', async (e, profileId) => {
   const ses = session.fromPartition(`persist:meowser-${profileId}`);
