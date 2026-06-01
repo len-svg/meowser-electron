@@ -1,6 +1,6 @@
 {
   "name": "meowser",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Meowser — 浮动浏览器（Chromium 重写版）",
   "main": "src/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
     "build:mac:x64": "electron-builder --mac --x64",
     "release:mac": "electron-builder --mac --arm64 && echo \"\\n→ artifacts: dist/Meowser-$(node -p \\\"require('./package.json').version\\\")-arm64.{dmg,zip}\"",
     "pack": "electron-builder --dir",
-    "test:smoke": "node tests/clipboard_test.js && node tests/chrome_screenshot.js && node tests/bm_manager_screenshot.js && node tests/webauthn_ua_test.js && node tests/window_manager_test.js && node tests/persistence_test.js && node tests/bookmark_folder_test.js && node tests/omnibox_autocomplete_test.js && node tests/home_click_test.js"
+    "test:smoke": "node tests/clipboard_test.js && node tests/chrome_screenshot.js && node tests/bm_manager_screenshot.js && node tests/webauthn_ua_test.js && node tests/window_manager_test.js && node tests/persistence_test.js && node tests/bookmark_folder_test.js && node tests/omnibox_autocomplete_test.js && node tests/home_click_test.js && node tests/urlbar_real_test.js"
   },
   "author": "Meowser",
   "license": "GPL-3.0",

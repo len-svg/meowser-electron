@@ -276,9 +276,11 @@
 
   <div id="wv-host" style="flex:1;display:flex"></div>
 
-  <div id="ext-panel" class="panel" style="min-width:280px;max-width:360px"></div>
-  <div id="main-menu" class="panel" style="min-width:260px"></div>
-  <div id="cmenu"     class="panel" style="min-width:140px"></div>
+  <!-- 透明 backdrop：点击关闭所有面板。webview 不冒泡 mousedown，所以必须用 overlay 接住点击 -->
+  <div id="panel-backdrop" style="display:none;position:fixed;inset:0;z-index:9998;background:transparent"></div>
+  <div id="ext-panel" class="panel" style="min-width:280px;max-width:360px;z-index:9999"></div>
+  <div id="main-menu" class="panel" style="min-width:260px;z-index:9999"></div>
+  <div id="cmenu"     class="panel" style="min-width:140px;z-index:9999"></div>
   <!-- URL bar 模糊匹配建议下拉 -->
   <div id="omnibox-suggest" class="panel" style="min-width:300px;max-width:640px;display:none;"></div>
 
@@ -493,7 +495,7 @@ let bookmarkedSet = new Set();
 // 安全包装：webview 未 dom-ready 时 getURL 会抛 "The WebView must be attached
 // to the DOM and the dom-ready event emitted" —— 全局静默返回空串
 function safeGetURL() {
-  try { return safeGetURL(); } catch { return ''; }
+  try { return wv.getURL ? wv.getURL() : ''; } catch { return ''; }
 }
 function safeGetTitle() {
   try { return wv.getTitle ? wv.getTitle() : ''; } catch { return ''; }
@@ -535,7 +537,11 @@ function toast(msg, kind = 'info') {
 
 // ─── 弹层管理 ───
 const allPanels = ['ext-panel','main-menu','cmenu'];
-function hideAllPanels() { allPanels.forEach(id => document.getElementById(id).classList.remove('show')); }
+const panelBackdrop = document.getElementById('panel-backdrop');
+function hideAllPanels() {
+  allPanels.forEach(id => document.getElementById(id).classList.remove('show'));
+  panelBackdrop.style.display = 'none';
+}
 function showPanelAt(id, anchorRect) {
   hideAllPanels();
   const p = document.getElementById(id);
@@ -546,13 +552,21 @@ function showPanelAt(id, anchorRect) {
   if (top + ph > window.innerHeight) top = anchorRect.top - ph - 4;
   p.style.left = Math.max(8, left) + 'px';
   p.style.top  = Math.max(8, top) + 'px';
+  // 显示 backdrop —— 覆盖 webview，点击它关闭所有面板
+  panelBackdrop.style.display = 'block';
 }
+// 点 backdrop 关
+panelBackdrop.addEventListener('mousedown', e => { e.stopPropagation(); hideAllPanels(); });
+// 旧的 document mousedown 检测（处理面板外但 chrome.html 内的点击）
 document.addEventListener('mousedown', e => {
+  if (e.target === panelBackdrop) return;
   if (!e.target.closest('.panel') && !e.target.closest('#btn-ext') && !e.target.closest('#btn-menu') && !e.target.closest('.bm')) {
     hideAllPanels();
   }
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') hideAllPanels(); });
+// webview blur / focus 时也关（webview 被 raise 焦点 = 用户点 webpage）
+function hideOnWvFocus() { hideAllPanels(); }
 
 // ─── 扩展面板 ───
 async function openExtPanel() {

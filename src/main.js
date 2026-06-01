@@ -363,11 +363,10 @@ function openEditWindow(profileOrNull) {
 }
 
 // ─── 浏览器窗 ───
-// 大小窗严格等比：小窗 = 大窗 × 0.38，保持同一宽高比（1200:800 = 3:2）
+// 大窗：标准浏览体验 / 小窗：minibar 用，浮在屏幕角落只看一眼
+// 比例不等 = 故意的（小窗 4:3 更窄更适合悬浮）
 const LARGE_W = 1200, LARGE_H = 800;
-const SMALL_SCALE = 0.38;
-const SMALL_W = Math.round(LARGE_W * SMALL_SCALE);   // 456
-const SMALL_H = Math.round(LARGE_H * SMALL_SCALE);   // 304
+const SMALL_W = 360,  SMALL_H = 240;
 
 function createBrowserWindow(profile, opts = {}) {
   const display = screen.getPrimaryDisplay();
