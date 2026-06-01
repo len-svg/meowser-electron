@@ -746,34 +746,33 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); doToggleSize(); }
 });
 
-// ─── URL 同步（多路触发兜底，防止任何一条路径漏掉）───
+// ─── URL 同步 ───
+// 上版 bug：safeGetURL 在导航瞬间 / dom-ready 前会返回 ''，旧代码把空值
+// 写回 urlInput → 用户看到"加载后 URL 消失"。新策略：**只在有真实 URL
+// 时覆盖**，永不主动清空（除了首页 file:// home_*.html 显式清空一次）。
+let lastSyncedUrl = '';
 function syncUrl() {
-  // 用户正在输入就别覆盖
   if (document.activeElement === urlInput) { updateStar(); return; }
   const u = safeGetURL();
-  // 工作区首页 file:// 的 URL 没意义，留空让用户输入
-  if (!u || /^file:\/\/.*home_[a-z_0-9]+\.html$/i.test(u)) {
+  if (!u) return;  // 空值不动 — 保留上一次的 URL
+  if (/^file:\/\/.*home_[a-z_0-9]+\.html$/i.test(u)) {
+    // 工作区首页：留空让用户输入
     urlInput.value = '';
+    lastSyncedUrl = '';
   } else {
     urlInput.value = u;
+    lastSyncedUrl = u;
   }
   updateStar();
 }
 wv.addEventListener('did-navigate',          () => { syncUrl(); maybeInjectStoreButton(); });
 wv.addEventListener('did-navigate-in-page',  () => { syncUrl(); maybeInjectStoreButton(); });
 wv.addEventListener('did-finish-load',       () => { syncUrl(); maybeInjectStoreButton(); });
-wv.addEventListener('did-start-loading',     () => { syncUrl(); });
 wv.addEventListener('did-stop-loading',      () => { syncUrl(); });
 wv.addEventListener('dom-ready',             () => { syncUrl(); });
-// 兜底：每 1s 拉一次，确保即使事件漏掉 URL bar 也会跟上（开销可忽略）
-setInterval(() => { try { syncUrl(); } catch {} }, 1000);
-// 兜底 2：监听 wv.src 属性变化（programmatic 改 src 时立刻反映）
-try {
-  new MutationObserver(() => {
-    // src 变化但 webview 还没 commit；先把 src 值当作 URL 显示
-    if (document.activeElement !== urlInput) urlInput.value = wv.getAttribute('src') || '';
-  }).observe(wv, { attributes: true, attributeFilter: ['src'] });
-} catch {}
+// 每 1.5s 拉一次兜底；syncUrl 内部已防御空值
+setInterval(() => { try { syncUrl(); } catch {} }, 1500);
+// 不再监听 wv.src 属性 — Chromium 会在内部清空 src 属性导致旧逻辑误清地址栏
 
 // ─── 链接 → 新窗口（不要 tabs）；meowser-install:// → 装扩展 ───
 wv.addEventListener('new-window', e => {

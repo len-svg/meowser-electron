@@ -949,14 +949,21 @@ const extPopupWindows = new Map();  // extId → BrowserWindow
 ipcMain.handle('extension:openPopup', (e, payload) => {
   const { profileId, extDir, anchor } = payload || {};
   const list = fs.readdirSync(path.join(DATA_DIR, 'extensions', profileId));
-  if (!list.includes(extDir)) return { ok: false, msg: 'not found' };
+  if (!list.includes(extDir)) return { ok: false, msg: 'extension dir not found' };
   const p = path.join(DATA_DIR, 'extensions', profileId, extDir);
   const meta = readManifest(p);
   const m = meta.raw || {};
   const action = m.action || m.browser_action;
-  if (!action || !action.default_popup) return { ok: false, msg: 'no popup' };
-  const popupHtml = path.join(p, action.default_popup);
-  if (!fs.existsSync(popupHtml)) return { ok: false, msg: 'popup file missing' };
+  if (!action || !action.default_popup) return { ok: false, msg: '该扩展没有 popup（只有 onClicked 触发，本版不支持）' };
+  const popupRel = action.default_popup;
+  if (!fs.existsSync(path.join(p, popupRel))) return { ok: false, msg: 'popup 文件不存在' };
+
+  // 必须用 chrome-extension://<id>/<popup> 加载，否则 chrome.* API 不可用 → popup 是死的
+  const status = extStatus.get(`${profileId}|${extDir}`);
+  if (!status || status.state !== 'loaded' || !status.id) {
+    return { ok: false, msg: '扩展未成功加载（看 🧩 面板里的错误）。重开窗口或菜单"重新加载扩展"' };
+  }
+  const popupUrl = `chrome-extension://${status.id}/${popupRel}`;
 
   // 关闭已有的 popup（chrome 行为：同时只允许一个）
   for (const [k, w] of extPopupWindows) {
@@ -975,16 +982,17 @@ ipcMain.handle('extension:openPopup', (e, payload) => {
     alwaysOnTop: true,
     webPreferences: {
       session: session.fromPartition(`persist:meowser-${profileId}`),
-      contextIsolation: true,
+      contextIsolation: false,   // 给 popup 完整 chrome.* 访问
       sandbox: false,
+      nodeIntegration: false,
     },
   });
-  popup.loadFile(popupHtml);
+  popup.loadURL(popupUrl).catch(err => console.error('popup loadURL', err.message));
   popup.once('ready-to-show', () => popup.show());
   popup.on('blur', () => { if (!popup.isDestroyed()) popup.close(); });
   popup.on('closed', () => extPopupWindows.delete(extDir));
   extPopupWindows.set(extDir, popup);
-  return { ok: true };
+  return { ok: true, url: popupUrl };
 });
 ipcMain.handle('extension:reload', async (e, profileId) => {
   const ses = session.fromPartition(`persist:meowser-${profileId}`);

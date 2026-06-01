@@ -1,6 +1,6 @@
 {
   "name": "meowser",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "description": "Meowser — 浮动浏览器（Chromium 重写版）",
   "main": "src/main.js",
   "scripts": {
