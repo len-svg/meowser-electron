@@ -89,6 +89,20 @@
   }
   .omnibox input::placeholder { color: #80868b; }
 
+  /* URL bar 建议下拉 */
+  #omnibox-suggest { padding: 4px 0; }
+  #omnibox-suggest .sugg {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 12px; cursor: pointer;
+    font-size: 13px; color: #1f1f1f;
+  }
+  #omnibox-suggest .sugg:hover, #omnibox-suggest .sugg.active { background: rgba(26,115,232,0.10); }
+  #omnibox-suggest .sugg img { width: 14px; height: 14px; flex-shrink: 0; }
+  #omnibox-suggest .sugg .t { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #omnibox-suggest .sugg .u { font-size: 11px; color: #80868b; font-family: ui-monospace, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  #omnibox-suggest .sugg .v { font-size: 10px; color: #80868b; padding: 1px 6px; background: rgba(0,0,0,0.04); border-radius: 8px; }
+  #omnibox-suggest .sugg .hl { background: rgba(252,232,3,0.4); font-weight: 600; }
+
   .omnibox .star {
     width: 28px; height: 28px; margin-right: 2px;
     display: inline-flex; align-items: center; justify-content: center;
@@ -237,6 +251,8 @@
   <div id="ext-panel" class="panel" style="min-width:280px;max-width:360px"></div>
   <div id="main-menu" class="panel" style="min-width:260px"></div>
   <div id="cmenu"     class="panel" style="min-width:140px"></div>
+  <!-- URL bar 模糊匹配建议下拉 -->
+  <div id="omnibox-suggest" class="panel" style="min-width:300px;max-width:640px;display:none;"></div>
 
 <script>
 const params = new URLSearchParams(location.search);
@@ -305,9 +321,115 @@ function navigate(text) {
   else url = 'https://www.google.com/search?q=' + encodeURIComponent(text);
   wv.src = url;
 }
+// ─── URL bar 模糊匹配（输入历史 + 当前书签） ───
+const suggestPanel = document.getElementById('omnibox-suggest');
+let suggestItems = [];     // [{url, title, source: 'history'|'bookmark', visit_count?}]
+let suggestIndex = -1;     // 当前高亮的索引；-1 = URL 输入本身
+let suggestTimer = null;
+
+function escForRegex(s){return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');}
+function highlight(text, q) {
+  if (!q) return escapeHtml(text);
+  const re = new RegExp('(' + escForRegex(q) + ')', 'gi');
+  return escapeHtml(text).replace(re, '<span class="hl">$1</span>');
+}
+function safeHostUrl(u){try{return new URL(u).hostname;}catch{return '';}}
+
+async function refreshSuggestions(query) {
+  query = (query || '').trim();
+  if (!query) { hideSuggest(); return; }
+  let pool = [];
+  // 历史（已 visit_count 倒序排，前面是最常访问）
+  try {
+    const hist = await window.api.historySearch(profile.id, query, 50);
+    pool = pool.concat(hist.map(h => ({ url: h.url, title: h.title || h.url, source: 'history', visit_count: h.visit_count })));
+  } catch {}
+  // 书签
+  try {
+    const bms = await window.api.listBookmarks(profile.id);
+    const q = query.toLowerCase();
+    const match = bms.filter(b => (b.title||'').toLowerCase().includes(q) || (b.url||'').toLowerCase().includes(q));
+    // 书签优先级高一点：插到最前
+    const seen = new Set(pool.map(x => x.url));
+    match.forEach(b => { if (!seen.has(b.url)) pool.unshift({ url: b.url, title: b.title || b.url, source: 'bookmark' }); });
+  } catch {}
+  // 排重 + 取前 8
+  const seen = new Set();
+  suggestItems = [];
+  for (const it of pool) {
+    if (seen.has(it.url)) continue;
+    seen.add(it.url);
+    suggestItems.push(it);
+    if (suggestItems.length >= 8) break;
+  }
+  renderSuggest(query);
+}
+
+function renderSuggest(q) {
+  if (suggestItems.length === 0) { hideSuggest(); return; }
+  suggestPanel.innerHTML = suggestItems.map((s, i) => `
+    <div class="sugg${i===suggestIndex?' active':''}" data-i="${i}">
+      <img src="https://www.google.com/s2/favicons?sz=32&domain=${encodeURIComponent(safeHostUrl(s.url))}" onerror="this.style.display='none'">
+      <span class="t">${highlight(s.title, q)}</span>
+      <span class="u">${highlight(s.url, q)}</span>
+      ${s.source === 'bookmark' ? '<span class="v">⭐</span>' : (s.visit_count ? `<span class="v">${s.visit_count}×</span>` : '')}
+    </div>`).join('');
+  suggestPanel.querySelectorAll('.sugg').forEach(el => {
+    el.onmouseenter = () => { suggestIndex = parseInt(el.dataset.i); highlightSelected(); };
+    el.onclick = () => { const i = parseInt(el.dataset.i); navigate(suggestItems[i].url); hideSuggest(); };
+  });
+  const r = urlInput.getBoundingClientRect();
+  suggestPanel.style.left = Math.round(r.left) + 'px';
+  suggestPanel.style.top  = Math.round(r.bottom + 4) + 'px';
+  suggestPanel.style.width = Math.round(r.width) + 'px';
+  suggestPanel.style.display = 'block';
+  suggestPanel.classList.add('show');
+}
+function highlightSelected() {
+  suggestPanel.querySelectorAll('.sugg').forEach((el, i) => el.classList.toggle('active', i === suggestIndex));
+}
+function hideSuggest() {
+  suggestPanel.style.display = 'none';
+  suggestPanel.classList.remove('show');
+  suggestIndex = -1;
+}
+
+urlInput.addEventListener('input', () => {
+  clearTimeout(suggestTimer);
+  suggestIndex = -1;
+  suggestTimer = setTimeout(() => refreshSuggestions(urlInput.value), 80);
+});
+urlInput.addEventListener('blur', () => { setTimeout(hideSuggest, 150); });  // 给点击时间
 urlInput.addEventListener('keydown', e => {
-  if (e.key === 'Enter') navigate(urlInput.value);
-  if (e.key === 'Escape') { urlInput.value = safeGetURL(); urlInput.blur(); }
+  if (e.key === 'Enter') {
+    if (suggestIndex >= 0 && suggestItems[suggestIndex]) {
+      navigate(suggestItems[suggestIndex].url);
+    } else {
+      navigate(urlInput.value);
+    }
+    hideSuggest();
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (suggestPanel.style.display === 'block') { hideSuggest(); return; }
+    urlInput.value = safeGetURL();
+    urlInput.blur();
+    return;
+  }
+  if (e.key === 'ArrowDown') {
+    if (suggestItems.length === 0) return;
+    e.preventDefault();
+    suggestIndex = Math.min(suggestIndex + 1, suggestItems.length - 1);
+    highlightSelected();
+    return;
+  }
+  if (e.key === 'ArrowUp') {
+    if (suggestItems.length === 0) return;
+    e.preventDefault();
+    suggestIndex = Math.max(suggestIndex - 1, -1);
+    highlightSelected();
+    return;
+  }
 });
 
 // proxy chip
@@ -504,6 +626,7 @@ function buildMainMenu() {
     { sep: true, title: '书签' },
     { ico: 'm12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z', label: '收藏当前页', click: () => star.click(), accel: '⌘D' },
     { ico: 'M4 5h16v15H4zM4 9h16',  label: '书签管理', click: () => window.api.openBookmarkManager(profile.id) },
+    { ico: 'M12 2a10 10 0 1 0 10 10M12 6v6l4 2', label: '历史记录（当前工作区）', click: () => window.api.openHistoryManager(profile.id) },
     { ico: 'M12 5v14M5 12l7 7 7-7', label: '从 Chrome 导入书签', click: async () => {
         const r = await window.api.importBookmarksFromChrome(profile.id);
         toast(r && r.ok ? `✓ 导入 ${r.count} 条` : `✗ ${r && r.msg || '失败'}`, r && r.ok ? 'info' : 'error');

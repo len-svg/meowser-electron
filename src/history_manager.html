@@ -133,7 +133,11 @@
 
 <script>
 let profiles = [];
-let currentPid = null;
+// 优先从 URL ?profile=pid 读，让"打开历史"时聚焦到正确工作区
+let currentPid = (() => {
+  const p = new URLSearchParams(location.search).get('profile');
+  return p || null;
+})();
 let allEntries = [];
 
 function escapeHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
