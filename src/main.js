@@ -634,8 +634,19 @@ function buildTrayMenu() {
   ]);
 }
 function createTray() {
-  tray = new Tray(nativeImage.createEmpty());
-  tray.setTitle('🐱');
+  // 用 logo 而非 emoji；macOS menu bar 高度 ~22pt（retina 44px）
+  // 用 brand/logo.png 缩到 22 高度，setTemplateImage 让系统按浅/深色自动反色
+  const logoPath = path.join(__dirname, '..', 'build', 'brand', 'logo.png');
+  let img;
+  try {
+    img = nativeImage.createFromPath(logoPath).resize({ height: 18 });
+  } catch (e) {
+    img = nativeImage.createEmpty();
+  }
+  tray = new Tray(img.isEmpty() ? nativeImage.createEmpty() : img);
+  // 没拿到 logo 才 fallback emoji；正常 setTitle('') 避免压挤位置
+  if (img.isEmpty()) tray.setTitle('🐱');
+  else tray.setTitle('');
   tray.setToolTip('Meowser');
   tray.setContextMenu(buildTrayMenu());
 }
@@ -1137,7 +1148,11 @@ ipcMain.handle('window:resize', (e, { w, h }) => {
 ipcMain.handle('window:toggleSize', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender); if (!win) return false;
   const [cw] = win.getSize(); const small = cw > SMALL_W + 20;
-  win.setSize(small ? SMALL_W : LARGE_W, small ? SMALL_H : LARGE_H, true);
+  const newW = small ? SMALL_W : LARGE_W;
+  const newH = small ? SMALL_H : LARGE_H;
+  win.setSize(newW, newH, true);
+  // 广播 resized 让所有 listener（包括 zoom 同步）收到，跟 blur-shrink 路径一致
+  win.webContents.send('window:resized', { w: newW, h: newH, small });
   return small;
 });
 ipcMain.handle('window:setOpacity', (e, alpha) => {

@@ -10,10 +10,20 @@ fs.mkdirSync(OUT, { recursive: true });
   const app = await electron.launch({ args: [path.join(__dirname, "..")], cwd: path.join(__dirname, ".."), env: _SB.env });
   const launcher = await app.firstWindow();
   await launcher.waitForLoadState('domcontentloaded');
+  await launcher.waitForTimeout(800);  // launcher ready-to-show 之后再点（沙箱启动稍慢）
 
-  // 点 📚 书签 pill
-  await launcher.click('#btn-bm');
-  const bm = await app.waitForEvent('window', { timeout: 5000 });
+  // 点 📚 书签 pill；带重试
+  let bm = null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      await launcher.click('#btn-bm');
+      bm = await app.waitForEvent('window', { timeout: 8000 });
+      break;
+    } catch (e) {
+      console.log(`  ⚠️ 第 ${i+1} 次点 #btn-bm 超时，重试`);
+    }
+  }
+  if (!bm) throw new Error('bm manager 没开起来');
   await bm.waitForLoadState('domcontentloaded');
   await bm.waitForTimeout(1500);
   console.log('bm manager URL:', bm.url());

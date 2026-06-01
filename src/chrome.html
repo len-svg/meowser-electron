@@ -538,9 +538,11 @@ function toast(msg, kind = 'info') {
 // ─── 弹层管理 ───
 const allPanels = ['ext-panel','main-menu','cmenu'];
 const panelBackdrop = document.getElementById('panel-backdrop');
+let panelLeaveTimer = null;
 function hideAllPanels() {
   allPanels.forEach(id => document.getElementById(id).classList.remove('show'));
   panelBackdrop.style.display = 'none';
+  if (panelLeaveTimer) { clearTimeout(panelLeaveTimer); panelLeaveTimer = null; }
 }
 function showPanelAt(id, anchorRect) {
   hideAllPanels();
@@ -552,8 +554,17 @@ function showPanelAt(id, anchorRect) {
   if (top + ph > window.innerHeight) top = anchorRect.top - ph - 4;
   p.style.left = Math.max(8, left) + 'px';
   p.style.top  = Math.max(8, top) + 'px';
-  // 显示 backdrop —— 覆盖 webview，点击它关闭所有面板
   panelBackdrop.style.display = 'block';
+
+  // mouseleave 延迟 350ms 关闭（用户期望"鼠标离开就关"）
+  // 350ms 是给手抖 / 跨子菜单的喘息时间
+  p.onmouseleave = () => {
+    if (panelLeaveTimer) clearTimeout(panelLeaveTimer);
+    panelLeaveTimer = setTimeout(() => { if (p.classList.contains('show')) hideAllPanels(); }, 350);
+  };
+  p.onmouseenter = () => {
+    if (panelLeaveTimer) { clearTimeout(panelLeaveTimer); panelLeaveTimer = null; }
+  };
 }
 // 点 backdrop 关
 panelBackdrop.addEventListener('mousedown', e => { e.stopPropagation(); hideAllPanels(); });
@@ -745,12 +756,25 @@ proxyChip.onclick = (e) => {
 };
 
 // ─── 大小窗 ───
+// 小窗模式时把 webview 内容也等比缩小（zoom -1.5 ≈ 70%），用户期望：窗口变小 = 内容也跟着变小
+function applyWebviewZoomForSize(isSmall) {
+  try {
+    if (wv.setZoomLevel) wv.setZoomLevel(isSmall ? -1.5 : 0);
+    else if (wv.getWebContents) wv.getWebContents().setZoomLevel(isSmall ? -1.5 : 0);
+  } catch {}
+}
 async function doToggleSize() {
   const nowSmall = await window.api.toggleSize();
   document.body.classList.toggle('small', nowSmall);
+  applyWebviewZoomForSize(nowSmall);
 }
 strip.addEventListener('dblclick', e => { e.preventDefault(); doToggleSize(); });
-window.api.onResized(({ small }) => document.body.classList.toggle('small', small));
+window.api.onResized(({ small }) => {
+  document.body.classList.toggle('small', small);
+  applyWebviewZoomForSize(small);
+});
+// 启动时根据 isSmall 立刻应用
+wv.addEventListener('dom-ready', () => applyWebviewZoomForSize(document.body.classList.contains('small')));
 
 // ─── 键盘 ───
 document.addEventListener('keydown', e => {
@@ -758,6 +782,17 @@ document.addEventListener('keydown', e => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'l') { e.preventDefault(); urlInput.focus(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'r') { e.preventDefault(); wv.reload(); }
   if ((e.metaKey || e.ctrlKey) && e.key === 'b') { e.preventDefault(); doToggleSize(); }
+  // ⌘N → 当前 profile fork 新窗口（落在首页，跟 Chrome 一致）
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === 'n') {
+    e.preventDefault();
+    window.api.openInNewWindow('');
+  }
+  // ⇧⌘N → fork 当前页 URL（多个窗口看同一站）
+  if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'N') {
+    e.preventDefault();
+    const u = safeGetURL();
+    if (u && !u.startsWith('file://')) window.api.openInNewWindow(u);
+  }
 });
 
 // ─── URL 同步 ───
