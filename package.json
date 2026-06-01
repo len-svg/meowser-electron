@@ -1,6 +1,6 @@
 {
   "name": "meowser",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Meowser — 浮动浏览器（Chromium 重写版）",
   "main": "src/main.js",
   "scripts": {
@@ -17,12 +17,14 @@
   "license": "GPL-3.0",
   "type": "commonjs",
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "electron": "^41.5.0",
     "electron-builder": "^26.8.1"
   },
   "dependencies": {
     "electron-chrome-extensions": "^4.9.0",
-    "electron-chrome-web-store": "^0.13.0"
+    "electron-chrome-web-store": "^0.13.0",
+    "electron-updater": "^6.8.3"
   },
   "build": {
     "appId": "com.meowser.app",
@@ -31,6 +33,14 @@
       "buildResources": "build",
       "output": "dist"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "len-svg",
+        "repo": "meowser-electron",
+        "releaseType": "release"
+      }
+    ],
     "compression": "maximum",
     "asar": true,
     "asarUnpack": [

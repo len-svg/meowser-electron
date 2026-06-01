@@ -13,6 +13,7 @@ const migrate = require('./migrate');
 const profilePrefs = require('./profile_prefs');
 const historyStore = require('./history_store');
 const sessionStore = require('./session_store');
+const updater = require('./updater');
 
 // 第三方扩展运行时（提供 chrome.* API + 商店原生安装支持）
 const { ElectronChromeExtensions } = require('electron-chrome-extensions');
@@ -1289,8 +1290,30 @@ function installAppMenu() {
     ...(isMac ? [{
       label: app.name,
       submenu: [
-        { role: 'about' },
+        { label: `${app.name} v${app.getVersion()}`, enabled: false },
         { type: 'separator' },
+        { label: '检查更新…', accelerator: 'Cmd+,', click: async () => {
+          try {
+            const r = await (require('electron-updater').autoUpdater).checkForUpdates();
+            const v = r && r.updateInfo && r.updateInfo.version;
+            const cur = app.getVersion();
+            if (!v || v === cur) {
+              dialog.showMessageBox({ type: 'info', title: '已是最新版', message: `当前 v${cur}`, buttons: ['好'] });
+            } else {
+              const pick = await dialog.showMessageBox({
+                type: 'info', title: '发现新版',
+                message: `v${v} 已发布`, detail: `当前 v${cur}\n打开 GitHub Releases 下载 dmg 拖装。\n（app 未签名，无法静默替换）`,
+                buttons: ['打开 Releases', '稍后'], defaultId: 0, cancelId: 1,
+              });
+              if (pick.response === 0) shell.openExternal('https://github.com/len-svg/meowser-electron/releases/latest');
+            }
+          } catch (e) {
+            dialog.showMessageBox({ type: 'error', title: '检查更新失败', message: e.message, buttons: ['好'] });
+          }
+        }},
+        { label: '前往 GitHub Releases', click: () => shell.openExternal('https://github.com/len-svg/meowser-electron/releases') },
+        { type: 'separator' },
+        { role: 'about' },
         { label: '启动器…', accelerator: 'Cmd+Alt+L', click: () => createLauncher() },
         { type: 'separator' },
         { role: 'services' },
@@ -1339,6 +1362,16 @@ function installAppMenu() {
 }
 
 app.whenReady().then(() => {
+  // macOS "关于 Meowser" 面板显示版本/作者/版权
+  if (process.platform === 'darwin') {
+    app.setAboutPanelOptions({
+      applicationName: 'Meowser',
+      applicationVersion: app.getVersion(),
+      version: `Electron ${process.versions.electron} · Chromium ${process.versions.chrome}`,
+      copyright: 'GPL-3.0 · len@maskex.vip',
+      website: 'https://github.com/len-svg/meowser-electron',
+    });
+  }
   installAppMenu();          // ← 必须在 createLauncher 之前
   createLauncher();
   createTray();
@@ -1357,6 +1390,13 @@ app.whenReady().then(() => {
   globalShortcut.register('Cmd+Alt+Left',  () => cycleWindows(-1));
   globalShortcut.register('Cmd+Alt+Down',  () => cycleWindows(+1));
   globalShortcut.register('Cmd+Alt+Up',    () => cycleWindows(-1));
+
+  // 自动更新（5s 后第一次查 + 每 6h 复查；只在打包后启动，dev 模式跳过）
+  if (app.isPackaged) {
+    try { updater.init(); } catch (e) { console.error('updater.init', e); }
+  } else {
+    console.log('[updater] dev 模式跳过自动更新');
+  }
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('will-quit', () => globalShortcut.unregisterAll());

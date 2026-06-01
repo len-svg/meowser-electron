@@ -96,6 +96,12 @@ contextBridge.exposeInMainWorld('api', {
   // 偏好（per-profile prefs）
   prefsGet: (profileId) => ipcRenderer.invoke('prefs:get', profileId),
 
+  // 自动更新
+  updaterCheck:         () => ipcRenderer.invoke('updater:check'),
+  updaterStatus:        () => ipcRenderer.invoke('updater:status'),
+  updaterOpenReleases:  () => ipcRenderer.invoke('updater:openReleases'),
+  onUpdaterStatus:      (cb) => ipcRenderer.on('updater:status', (_, p) => cb(p)),
+
   // 窗口管理 (v0.5.0)
   windowsList:               () => ipcRenderer.invoke('windows:list'),
   windowsFocus:              (id) => ipcRenderer.invoke('windows:focus', id),
