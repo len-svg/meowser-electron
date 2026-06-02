@@ -27,13 +27,36 @@ function add(profileId, item) {
   const list = load(profileId);
   if (!item.url) return list;
   if (list.some(b => b.url === item.url)) return list;
-  list.push({ url: item.url, title: item.title || item.url, ts: Date.now() });
+  list.push({ url: item.url, title: item.title || item.url, folder: item.folder || '', ts: Date.now() });
   save(profileId, list);
   return list;
 }
 
 function remove(profileId, url) {
   const list = load(profileId).filter(b => b.url !== url);
+  save(profileId, list);
+  return list;
+}
+
+// 把书签移动到某文件夹（folder='' 表示未分类）
+function setFolder(profileId, url, folder) {
+  const list = load(profileId);
+  const b = list.find(x => x.url === url);
+  if (b) { b.folder = folder || ''; save(profileId, list); }
+  return list;
+}
+
+// 列出所有文件夹名（去重，排序，不含空）
+function folders(profileId) {
+  const set = new Set();
+  load(profileId).forEach(b => { if (b.folder) set.add(b.folder); });
+  return [...set].sort();
+}
+
+// 重命名文件夹（把所有该 folder 的书签改名）
+function renameFolder(profileId, oldName, newName) {
+  const list = load(profileId);
+  list.forEach(b => { if (b.folder === oldName) b.folder = newName || ''; });
   save(profileId, list);
   return list;
 }
@@ -55,12 +78,21 @@ function importFromChrome(profileId) {
   try {
     const j = JSON.parse(fs.readFileSync(cb, 'utf8'));
     const out = [];
-    function walk(n) {
+    // 保留 Chrome 文件夹层级：用最近一层文件夹名作为 folder
+    function walk(n, folder) {
       if (!n) return;
-      if (n.type === 'url') out.push({ url: n.url, title: n.name, ts: Date.now() });
-      else if (n.children) n.children.forEach(walk);
+      if (n.type === 'url') out.push({ url: n.url, title: n.name, folder: folder || '', ts: Date.now() });
+      else if (n.type === 'folder' && n.children) {
+        // 顶层 bookmark_bar/other/synced 不当文件夹；子文件夹名才用
+        n.children.forEach(c => walk(c, n.name || folder));
+      } else if (n.children) {
+        n.children.forEach(c => walk(c, folder));
+      }
     }
-    if (j.roots) ['bookmark_bar', 'other', 'synced'].forEach(k => j.roots[k] && walk(j.roots[k]));
+    if (j.roots) ['bookmark_bar', 'other', 'synced'].forEach(k => {
+      const root = j.roots[k];
+      if (root && root.children) root.children.forEach(c => walk(c, ''));
+    });
     const cur = load(profileId);
     const seen = new Set(cur.map(b => b.url));
     out.forEach(b => { if (!seen.has(b.url)) cur.push(b); });
@@ -107,4 +139,4 @@ function escHtml(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<'
 function escAttr(s){return escHtml(s);}
 function decodeEntities(s){return String(s||'').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'");}
 
-module.exports = { load, save, add, remove, reorder, importFromChrome, exportHtml, importHtml };
+module.exports = { load, save, add, remove, reorder, setFolder, folders, renameFolder, importFromChrome, exportHtml, importHtml };
