@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld('api', {
   togglePin: () => ipcRenderer.invoke('window:toggleAlwaysOnTop'),
   setAutoShrink: (v) => ipcRenderer.invoke('window:setAutoShrink', v),
   openExternal: (url, app) => ipcRenderer.invoke('window:openExternal', url, app),
+  detectBrowsers: () => ipcRenderer.invoke('window:detectBrowsers'),
   relaunchIncognito: () => ipcRenderer.invoke('window:relaunchIncognito'),
   onResized: (cb) => ipcRenderer.on('window:resized', (_, d) => cb(d)),
 

@@ -1183,10 +1183,21 @@ ipcMain.handle('window:setAutoShrink', (e, v) => {
   saveProfilePref(win, 'auto_shrink', !!v);
   return !!v;
 });
+// 已知浏览器的 .app 名（按用户偏好顺序，第一个装上的就当"默认"）
+const KNOWN_BROWSERS = ['Arc', 'Google Chrome', 'Microsoft Edge', 'Brave Browser', 'Vivaldi', 'Orion', 'Firefox'];
+function detectInstalledBrowsers() {
+  const fs = require('fs');
+  return KNOWN_BROWSERS.filter(app => fs.existsSync(`/Applications/${app}.app`));
+}
+ipcMain.handle('window:detectBrowsers', () => detectInstalledBrowsers());
+
 ipcMain.handle('window:openExternal', (e, url, app) => {
   if (!url) return;
-  if (app === 'chrome') require('child_process').exec(`open -a "Google Chrome" ${JSON.stringify(url)}`);
-  else if (app === 'safari') require('child_process').exec(`open -a Safari ${JSON.stringify(url)}`);
+  const { exec } = require('child_process');
+  // 兼容旧参数 'chrome'/'safari'；新参数直接传 app 名（如 'Arc' / 'Microsoft Edge'）
+  const appMap = { chrome: 'Google Chrome', safari: 'Safari', arc: 'Arc', edge: 'Microsoft Edge', brave: 'Brave Browser' };
+  const appName = appMap[app] || app;
+  if (appName) exec(`open -a "${appName.replace(/"/g, '\\"')}" ${JSON.stringify(url)}`);
   else shell.openExternal(url);
 });
 ipcMain.handle('window:relaunchIncognito', (e) => {

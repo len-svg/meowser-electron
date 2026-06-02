@@ -62,11 +62,17 @@ const _SB = createSandbox();
   // 给 OS 一点时间处理键盘事件
   await win.waitForTimeout(400);
 
+  // 写一个 sentinel 进系统剪贴板；如果 ⌘C 真的工作，会被覆盖；不然 sentinel 还在
+  await app.evaluate(({ clipboard }) => clipboard.writeText('BEFORE_⌘C'));
+
+  // 用 Playwright locator 显式聚焦 input（chain run 偶发焦点丢失）
+  await win.locator('#__clipboard_probe__').focus();
+  await win.waitForTimeout(150);
   // 模拟 ⌘A（全选）然后 ⌘C
   await win.keyboard.press('Meta+a');
-  await win.waitForTimeout(100);
+  await win.waitForTimeout(150);
   await win.keyboard.press('Meta+c');
-  await win.waitForTimeout(300);
+  await win.waitForTimeout(400);
 
   // 从主进程读 clipboard
   const clip = await app.evaluate(({ clipboard }) => clipboard.readText());
