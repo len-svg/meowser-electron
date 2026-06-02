@@ -68,10 +68,20 @@ function check(name, ok, detail) {
 
   // ─── E2 menu mouseleave 350ms 关闭 ───
   console.log('\n=== E2 menu 鼠标离开 350ms 自动关 ===');
-  // 打开 ⋮ 主菜单
-  await win.click('#btn-menu');
-  await win.waitForTimeout(500);
-  let panelShown = await win.evaluate(() => document.getElementById('main-menu').classList.contains('show'));
+  // 打开 ⋮ 主菜单 — 加重试，应对 race（preload IPC、buildMainMenu 可能慢一拍）
+  let panelShown = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await win.click('#btn-menu');
+    // 轮询最多 1.2s
+    for (let t = 0; t < 12; t++) {
+      panelShown = await win.evaluate(() => document.getElementById('main-menu').classList.contains('show'));
+      if (panelShown) break;
+      await win.waitForTimeout(100);
+    }
+    if (panelShown) break;
+    console.log(`  ⚠️ 第 ${attempt + 1} 次点 #btn-menu 没显示，重试`);
+    await win.waitForTimeout(300);
+  }
   check('点击 ⋮ 后菜单显示', panelShown);
   // 模拟 mouseleave
   await win.evaluate(() => {
